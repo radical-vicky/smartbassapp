@@ -1,18 +1,36 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { StyleSheet, View } from "react-native";
+import { MusicProvider } from "../context/MusicContext";
+import { PlaylistProvider } from "../context/PlaylistContext";
+import { RecentlyPlayedProvider } from "../context/RecentlyPlayedContext";
+import { SettingsProvider } from "../context/SettingsContext"; // <-- NEW
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
-
-SplashScreen.preventAutoHideAsync();
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function RootLayout() {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <View style={styles.root}>
+      {/* SettingsProvider must wrap everything so any screen can read preferences */}
+      <SettingsProvider>
+        <MusicProvider>
+          <PlaylistProvider>
+            <RecentlyPlayedProvider>
+              <StatusBar style="light" />
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: "#08090B" },
+                  animation: "fade",
+                  animationDuration: 200,
+                }}
+              />
+            </RecentlyPlayedProvider>
+          </PlaylistProvider>
+        </MusicProvider>
+      </SettingsProvider>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: "#08090B" },
+});

@@ -1,0 +1,149 @@
+diff --git a/node_modules/expo-audio/android/.gradle/9.8.1/checksums/checksums.lock b/node_modules/expo-audio/android/.gradle/9.8.1/checksums/checksums.lock
+new file mode 100644
+index 0000000..c52a32f
+Binary files /dev/null and b/node_modules/expo-audio/android/.gradle/9.8.1/checksums/checksums.lock differ
+diff --git a/node_modules/expo-audio/android/.gradle/9.8.1/fileChanges/last-build.bin b/node_modules/expo-audio/android/.gradle/9.8.1/fileChanges/last-build.bin
+new file mode 100644
+index 0000000..f76dd23
+Binary files /dev/null and b/node_modules/expo-audio/android/.gradle/9.8.1/fileChanges/last-build.bin differ
+diff --git a/node_modules/expo-audio/android/.gradle/9.8.1/fileHashes/fileHashes.bin b/node_modules/expo-audio/android/.gradle/9.8.1/fileHashes/fileHashes.bin
+new file mode 100644
+index 0000000..312d295
+Binary files /dev/null and b/node_modules/expo-audio/android/.gradle/9.8.1/fileHashes/fileHashes.bin differ
+diff --git a/node_modules/expo-audio/android/.gradle/9.8.1/fileHashes/fileHashes.lock b/node_modules/expo-audio/android/.gradle/9.8.1/fileHashes/fileHashes.lock
+new file mode 100644
+index 0000000..84f1f96
+Binary files /dev/null and b/node_modules/expo-audio/android/.gradle/9.8.1/fileHashes/fileHashes.lock differ
+diff --git a/node_modules/expo-audio/android/.gradle/9.8.1/gc.properties b/node_modules/expo-audio/android/.gradle/9.8.1/gc.properties
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-audio/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock b/node_modules/expo-audio/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock
+new file mode 100644
+index 0000000..cb50d95
+Binary files /dev/null and b/node_modules/expo-audio/android/.gradle/buildOutputCleanup/buildOutputCleanup.lock differ
+diff --git a/node_modules/expo-audio/android/.gradle/buildOutputCleanup/cache.properties b/node_modules/expo-audio/android/.gradle/buildOutputCleanup/cache.properties
+new file mode 100644
+index 0000000..b01d0fa
+--- /dev/null
++++ b/node_modules/expo-audio/android/.gradle/buildOutputCleanup/cache.properties
+@@ -0,0 +1,2 @@
++#Sun Nov 08 20:05:41 EAT 2026
++gradle.version=9.8.1
+diff --git a/node_modules/expo-audio/android/.gradle/vcs-1/gc.properties b/node_modules/expo-audio/android/.gradle/vcs-1/gc.properties
+new file mode 100644
+index 0000000..e69de29
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
+index 6c81fce..781a84c 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioModule.kt
+@@ -576,6 +576,11 @@ class AudioModule : Module() {
+       Property("id") { player ->
+         player.id
+       }
++  Property("audioSessionId") { player ->
++    runOnMain {
++      player.ref.audioSessionId
++    }
++  }
+ 
+       Property("isBuffering") { player ->
+         runOnMain {
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
+index fb2d0b5..3673b37 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
+@@ -23,6 +23,8 @@ import java.lang.ref.WeakReference
+ 
+ private const val PLAYBACK_STATUS_UPDATE = "playbackStatusUpdate"
+ private const val AUDIO_SAMPLE_UPDATE = "audioSampleUpdate"
++private const val NEXT_TRACK_REQUEST = "nextTrackRequest"
++private const val PREVIOUS_TRACK_REQUEST = "previousTrackRequest"
+ private const val SEEK_JUMP_INTERVAL_MS: Long = 10_000
+ 
+ @UnstableApi
+@@ -68,6 +70,16 @@ class AudioPlayer(
+   override var lockScreenOptions: AudioLockScreenOptions? = null
+   override var mediaSession: MediaSession = buildBasicMediaSession(context, ref) { requestPlay() }
+   override val serviceConnection = AudioPlaybackServiceConnection(WeakReference(this), appContext)
++  override val supportsNextTrack = true
++  override val supportsPreviousTrack = true
++
++  override fun nextTrack() {
++    emit(NEXT_TRACK_REQUEST, emptyMap<String, Any>())
++  }
++
++  override fun previousTrack() {
++    emit(PREVIOUS_TRACK_REQUEST, emptyMap<String, Any>())
++  }
+ 
+   override val isLive: Boolean
+     get() = ref.isCurrentMediaItemLive
+@@ -173,6 +185,7 @@ class AudioPlayer(
+ 
+     return mapOf(
+       "id" to id,
++      "audioSessionId" to ref.audioSessionId,
+       "currentTime" to currentTime,
+       "playbackState" to playbackStateToString(ref.playbackState),
+       "timeControlStatus" to if (playingStatus) {
+diff --git a/node_modules/expo-audio/build/AudioModule.types.d.ts b/node_modules/expo-audio/build/AudioModule.types.d.ts
+index 0d63c9b..7b5c7e2 100644
+--- a/node_modules/expo-audio/build/AudioModule.types.d.ts
++++ b/node_modules/expo-audio/build/AudioModule.types.d.ts
+@@ -31,6 +31,8 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
+      * Unique identifier for the player object.
+      */
+     id: string;
++  /** Android audio session ID used by native audio effects. */
++  audioSessionId: number;
+     /**
+      * Boolean value indicating whether the player is currently playing.
+      */
+@@ -222,6 +224,10 @@ export type AudioEvents = {
+     playbackStatusUpdate(status: AudioStatus): void;
+     /** Fired when audio sampling is enabled and new sample data is available. */
+     audioSampleUpdate(data: AudioSample): void;
++    /** Fired when the Android lock-screen or media notification requests the next track. */
++    nextTrackRequest(data: Record<string, never>): void;
++    /** Fired when the Android lock-screen or media notification requests the previous track. */
++    previousTrackRequest(data: Record<string, never>): void;
+ };
+ export declare class AudioRecorder extends SharedObject<RecordingEvents> {
+     /**
+diff --git a/node_modules/expo-audio/src/Audio.types.ts b/node_modules/expo-audio/src/Audio.types.ts
+index fe5f5c3..6c8e7b1 100644
+--- a/node_modules/expo-audio/src/Audio.types.ts
++++ b/node_modules/expo-audio/src/Audio.types.ts
+@@ -217,6 +217,8 @@ export type PitchCorrectionQuality = 'low' | 'medium' | 'high';
+ export type AudioStatus = {
+   /** Unique identifier for the player instance. */
+   id: string;
++  /** Android audio session ID used by native audio effects. */
++  audioSessionId?: number;
+   /** Current playback position in seconds. */
+   currentTime: number;
+   /** String representation of the player's internal playback state. */
+diff --git a/node_modules/expo-audio/src/AudioModule.types.ts b/node_modules/expo-audio/src/AudioModule.types.ts
+index 3194a8e..76160eb 100644
+--- a/node_modules/expo-audio/src/AudioModule.types.ts
++++ b/node_modules/expo-audio/src/AudioModule.types.ts
+@@ -56,6 +56,8 @@ export declare class AudioPlayer extends SharedObject<AudioEvents> {
+    * Unique identifier for the player object.
+    */
+   id: string;
++  /** Android audio session ID used by native audio effects. */
++  audioSessionId: number;
+ 
+   /**
+    * Boolean value indicating whether the player is currently playing.
+@@ -281,6 +283,10 @@ export type AudioEvents = {
+   playbackStatusUpdate(status: AudioStatus): void;
+   /** Fired when audio sampling is enabled and new sample data is available. */
+   audioSampleUpdate(data: AudioSample): void;
++  /** Fired when the Android lock-screen or media notification requests the next track. */
++  nextTrackRequest(data: Record<string, never>): void;
++  /** Fired when the Android lock-screen or media notification requests the previous track. */
++  previousTrackRequest(data: Record<string, never>): void;
+ };
+ 
+ export declare class AudioRecorder extends SharedObject<RecordingEvents> {
