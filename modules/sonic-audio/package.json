@@ -1,11 +1,9 @@
 {
   "name": "sonic-audio",
   "version": "1.0.0",
-  "private": true,
+  "description": "Custom native audio effects module",
   "main": "index.ts",
-  "types": "index.ts",
   "peerDependencies": {
-    "expo": "*",
-    "expo-modules-core": "*"
+    "expo": "*"
   }
 }
