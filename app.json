@@ -81,7 +81,7 @@
       "expo-web-browser",
       "expo-media-control",
       "expo-secure-store",
-      "./modules/sonic-audio"
+      "./modules/sonic-audio/app.plugin.js"
     ],
     "experiments": {
       "typedRoutes": true,
