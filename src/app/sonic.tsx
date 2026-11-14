@@ -1,3 +1,4 @@
+// src/app/sonic.tsx
 import { Ionicons } from "@expo/vector-icons";
 import Slider from "@react-native-community/slider";
 import * as Haptics from "expo-haptics";
@@ -26,6 +27,7 @@ export default function SonicEngineScreen() {
 
   const currentTrack = music.currentTrack;
   const isEnabled = music.sonicEnabled;
+  const isAttached = music.audioCapabilities?.attached;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -54,6 +56,14 @@ export default function SonicEngineScreen() {
             </Pressable>
           </View>
         </View>
+
+        {!isAttached && currentTrack && (
+          <View style={{ marginHorizontal: 20, marginBottom: 15, backgroundColor: '#331111', padding: 12, borderRadius: 8 }}>
+            <Text style={{ color: '#FFAAAA', fontSize: 12, textAlign: 'center' }}>
+              Audio engine not attached. Rebuild the app to apply effects.
+            </Text>
+          </View>
+        )}
 
         <View style={[styles.mainCard, !isEnabled && { opacity: 0.5 }]}>
           <View style={styles.gridRow}>

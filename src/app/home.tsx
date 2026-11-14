@@ -3,6 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Href, useRouter } from "expo-router";
 import { ComponentProps, useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -67,7 +68,9 @@ function useUserName() {
     let cancelled = false;
     (async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         if (!user) return;
 
         const { data: profile } = await supabase
@@ -76,7 +79,8 @@ function useUserName() {
           .eq("id", user.id)
           .maybeSingle();
 
-        const raw = profile?.full_name || user.email?.split("@")[0] || "Music Lover";
+        const raw =
+          profile?.full_name || user.email?.split("@")[0] || "Music Lover";
         const first = raw.trim().split(/\s+/)[0];
         if (!cancelled) {
           setName(first.charAt(0).toUpperCase() + first.slice(1));
@@ -85,7 +89,9 @@ function useUserName() {
         console.warn("Failed to load user name:", e);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return name;
@@ -93,13 +99,23 @@ function useUserName() {
 
 /* ---------- Small building blocks ---------- */
 
-function Artwork({ size, tint = COLORS.card, radius = 8 }: { size?: number; tint?: string; radius?: number; }) {
+function Artwork({
+  size,
+  tint = COLORS.card,
+  radius = 8,
+}: {
+  size?: number;
+  tint?: string;
+  radius?: number;
+}) {
   const ring = size ? Math.round(size * 0.5) : 30;
   return (
     <View
       style={[
         styles.artwork,
-        size ? { width: size, height: size } : { width: "100%", aspectRatio: 1 },
+        size
+          ? { width: size, height: size }
+          : { width: "100%", aspectRatio: 1 },
         { backgroundColor: tint, borderRadius: radius },
       ]}
     >
@@ -127,10 +143,18 @@ function Artwork({ size, tint = COLORS.card, radius = 8 }: { size?: number; tint
   );
 }
 
-function SectionHeader({ title, onSeeAll }: { title: string; onSeeAll?: () => void; }) {
+function SectionHeader({
+  title,
+  onSeeAll,
+}: {
+  title: string;
+  onSeeAll?: () => void;
+}) {
   return (
     <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle} accessibilityRole="header">{title}</Text>
+      <Text style={styles.sectionTitle} accessibilityRole="header">
+        {title}
+      </Text>
       {onSeeAll && (
         <Pressable onPress={onSeeAll} hitSlop={10}>
           <Text style={styles.seeAll}>See all</Text>
@@ -140,35 +164,80 @@ function SectionHeader({ title, onSeeAll }: { title: string; onSeeAll?: () => vo
   );
 }
 
-function EmptyBlock({ text, actionLabel, onAction }: { text: string; actionLabel: string; onAction: () => void; }) {
+function EmptyBlock({
+  text,
+  actionLabel,
+  onAction,
+  loading,
+}: {
+  text: string;
+  actionLabel: string;
+  onAction: () => void;
+  loading?: boolean;
+}) {
   return (
     <View style={styles.emptyBlock}>
       <Text style={styles.emptyText}>{text}</Text>
-      <Pressable onPress={onAction} hitSlop={10}>
-        <Text style={styles.emptyAction}>{actionLabel}</Text>
-      </Pressable>
+      {loading ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <ActivityIndicator size="small" color={COLORS.orange} />
+          <Text style={styles.emptyAction}>Scanning your device…</Text>
+        </View>
+      ) : (
+        <Pressable onPress={onAction} hitSlop={10}>
+          <Text style={styles.emptyAction}>{actionLabel}</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
 
-function MediaCard({ width, title, subtitle, tint, onPress }: { width: number; title: string; subtitle: string; tint: string; onPress: () => void; }) {
+function MediaCard({
+  width,
+  title,
+  subtitle,
+  tint,
+  onPress,
+}: {
+  width: number;
+  title: string;
+  subtitle: string;
+  tint: string;
+  onPress: () => void;
+}) {
   return (
     <Pressable style={{ width }} onPress={onPress}>
       <Artwork tint={tint} />
-      <Text style={styles.cardTitle} numberOfLines={1}>{title}</Text>
-      <Text style={styles.cardSubtitle} numberOfLines={1}>{subtitle}</Text>
+      <Text style={styles.cardTitle} numberOfLines={1}>
+        {title}
+      </Text>
+      <Text style={styles.cardSubtitle} numberOfLines={1}>
+        {subtitle}
+      </Text>
     </Pressable>
   );
 }
 
-function TrackRow({ track, onPress, onMore }: { track: Track; onPress: () => void; onMore: () => void; }) {
+function TrackRow({
+  track,
+  onPress,
+  onMore,
+}: {
+  track: Track;
+  onPress: () => void;
+  onMore: () => void;
+}) {
   const title = cleanFilename(track.filename);
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <Artwork size={50} />
       <View style={styles.rowText}>
-        <Text style={styles.rowTitle} numberOfLines={1}>{title}</Text>
-        <Text style={styles.rowSubtitle} numberOfLines={1}>{track.artist}</Text>
+        <Text style={styles.rowTitle} numberOfLines={1}>
+          {title}
+        </Text>
+        <Text style={styles.rowSubtitle} numberOfLines={1}>
+          {track.artist}
+        </Text>
       </View>
       <Pressable onPress={onMore} style={styles.iconButton}>
         <Ionicons name="ellipsis-vertical" size={20} color={COLORS.muted} />
@@ -188,6 +257,21 @@ export default function HomeScreen() {
   const { recentTracks, recordPlay } = useRecentlyPlayed();
   const userName = useUserName();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+
+  useEffect(() => {
+    if (music.isScanning || music.hasScanned) return;
+    let cancelled = false;
+    (async () => {
+      const result = await music.scanDeviceMusic();
+      if (!cancelled && !result.ok && result.reason === "denied") {
+        setPermissionDenied(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [music.hasScanned, music.isScanning, music.scanDeviceMusic]);
 
   const cardWidth = Math.floor((width - SCREEN_PADDING * 2 - GAP * 2) / 3);
 
@@ -221,11 +305,24 @@ export default function HomeScreen() {
     // Future: open track options
   };
 
+  const requestPermissionAndScan = async () => {
+    setPermissionDenied(false);
+    const result = await music.scanDeviceMusic(true);
+    if (!result.ok && result.reason === "denied") {
+      setPermissionDenied(true);
+    } else if (!result.ok && result.reason === "error") {
+      go("/permissions" as Href);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.container}>
         <View style={styles.header}>
-          <Pressable onPress={() => setIsDrawerOpen(true)} style={styles.iconButton}>
+          <Pressable
+            onPress={() => setIsDrawerOpen(true)}
+            style={styles.iconButton}
+          >
             <Ionicons name="menu" size={28} color={COLORS.text} />
           </Pressable>
           <Pressable onPress={() => go("/search")} style={styles.iconButton}>
@@ -237,11 +334,13 @@ export default function HomeScreen() {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{
             paddingHorizontal: SCREEN_PADDING,
-            paddingBottom: insets.bottom + (currentTrack ? MINI_PLAYER_HEIGHT + 40 : 24),
+            paddingBottom:
+              insets.bottom + (currentTrack ? MINI_PLAYER_HEIGHT + 40 : 24),
           }}
         >
           <Text style={styles.greeting}>
-            {getGreeting()}{userName ? `, ${userName}` : ""}
+            {getGreeting()}
+            {userName ? `, ${userName}` : ""}
           </Text>
 
           <View style={styles.hero}>
@@ -255,19 +354,31 @@ export default function HomeScreen() {
                 <Text style={styles.heroTitle}>Play with Power.</Text>
                 <Text style={styles.heroSubtitle}>Feel the Music.</Text>
                 <Pressable style={styles.heroButton} onPress={shufflePlay}>
-                  <Ionicons name="shuffle" size={16} color={COLORS.background} />
+                  <Ionicons
+                    name="shuffle"
+                    size={16}
+                    color={COLORS.background}
+                  />
                   <Text style={styles.heroButtonText}>Shuffle play</Text>
                 </Pressable>
               </View>
               <View style={styles.heroIcon} pointerEvents="none">
-                <Ionicons name="headset" size={80} color="rgba(255,255,255,0.2)" />
+                <Ionicons
+                  name="headset"
+                  size={80}
+                  color="rgba(255,255,255,0.2)"
+                />
               </View>
             </LinearGradient>
           </View>
 
           <View style={styles.quickRow}>
             {QUICK_ACCESS.map((item) => (
-              <Pressable key={item.label} style={styles.quickItem} onPress={() => go(item.route)}>
+              <Pressable
+                key={item.label}
+                style={styles.quickItem}
+                onPress={() => go(item.route)}
+              >
                 <View style={styles.quickIcon}>
                   <Ionicons name={item.icon} size={24} color={COLORS.orange} />
                 </View>
@@ -276,9 +387,25 @@ export default function HomeScreen() {
             ))}
           </View>
 
-          <SectionHeader title="Recently played" onSeeAll={() => go("/recently-played")} />
+          <SectionHeader
+            title="Recently played"
+            onSeeAll={() => go("/recently-played")}
+          />
           {recentlyPlayed.length === 0 ? (
-            <EmptyBlock text="Nothing played yet. Pick a song to get started." actionLabel="Open library" onAction={() => go("/library")} />
+            music.tracks.length === 0 ? (
+              <EmptyBlock
+                text="Nothing played yet. Grant access and pick a song to get started."
+                actionLabel="Grant permission"
+                onAction={requestPermissionAndScan}
+                loading={music.isScanning}
+              />
+            ) : (
+              <EmptyBlock
+                text="Nothing played yet. Pick a song to get started."
+                actionLabel="Open library"
+                onAction={() => go("/library")}
+              />
+            )
           ) : (
             <View style={styles.grid}>
               {recentlyPlayed.map((track) => (
@@ -296,7 +423,11 @@ export default function HomeScreen() {
 
           <SectionHeader title="Your playlists" />
           {yourPlaylists.length === 0 ? (
-            <EmptyBlock text="Playlists you create will appear here." actionLabel="Create a playlist" onAction={() => go("/playlists")} />
+            <EmptyBlock
+              text="Playlists you create will appear here."
+              actionLabel="Create a playlist"
+              onAction={() => go("/playlists")}
+            />
           ) : (
             <View style={styles.grid}>
               {yourPlaylists.map((p) => (
@@ -314,18 +445,61 @@ export default function HomeScreen() {
 
           <SectionHeader title="New music" />
           {newMusic.length === 0 ? (
-            <EmptyBlock text="Songs on your device will show up here." actionLabel="Check permissions" onAction={() => go("/permissions")} />
+            music.isScanning ? (
+              <EmptyBlock
+                text="Looking for music on your device…"
+                actionLabel=""
+                onAction={() => {}}
+                loading
+              />
+            ) : permissionDenied ? (
+              <EmptyBlock
+                text="Music access is off. Grant permission to see your device's songs here."
+                actionLabel="Grant permission"
+                onAction={requestPermissionAndScan}
+              />
+            ) : music.hasScanned ? (
+              <EmptyBlock
+                text="No music found on this device yet. Add some songs, then rescan."
+                actionLabel="Rescan device"
+                onAction={requestPermissionAndScan}
+              />
+            ) : (
+              <EmptyBlock
+                text="Songs on your device will show up here."
+                actionLabel="Scan my device"
+                onAction={requestPermissionAndScan}
+              />
+            )
           ) : (
             <View style={styles.list}>
               {newMusic.map((track) => (
-                <TrackRow key={track.id} track={track} onPress={() => play(track)} onMore={() => openTrackOptions(track)} />
+                <TrackRow
+                  key={track.id}
+                  track={track}
+                  onPress={() => play(track)}
+                  onMore={() => openTrackOptions(track)}
+                />
               ))}
             </View>
           )}
 
           <SectionHeader title="Albums for you" />
           {albums.length === 0 ? (
-            <EmptyBlock text="Albums appear once your songs have album details." actionLabel="Open library" onAction={() => go("/library")} />
+            music.tracks.length === 0 ? (
+              <EmptyBlock
+                text="Albums appear once your songs are scanned."
+                actionLabel="Grant permission"
+                onAction={requestPermissionAndScan}
+                loading={music.isScanning}
+              />
+            ) : (
+              <EmptyBlock
+                text="Albums appear once your songs have album details."
+                actionLabel="Open library"
+                onAction={() => go("/library")}
+              />
+            )
           ) : (
             <View style={styles.grid}>
               {albums.map((track) => (
@@ -336,7 +510,9 @@ export default function HomeScreen() {
                   subtitle={track.artist}
                   tint="#3D2222"
                   onPress={() => {
-                    const albumTracks = music.tracks.filter((t) => t.album === track.album);
+                    const albumTracks = music.tracks.filter(
+                      (t) => t.album === track.album
+                    );
                     play(albumTracks[0] ?? track, albumTracks);
                   }}
                 />
@@ -354,14 +530,25 @@ export default function HomeScreen() {
             <View style={styles.miniRow}>
               <Artwork size={44} radius={6} />
               <View style={styles.miniInfo}>
-                <Text style={styles.miniTitle} numberOfLines={1}>{cleanFilename(currentTrack.filename)}</Text>
-                <Text style={styles.miniArtist} numberOfLines={1}>{currentTrack.artist}</Text>
+                <Text style={styles.miniTitle} numberOfLines={1}>
+                  {cleanFilename(currentTrack.filename)}
+                </Text>
+                <Text style={styles.miniArtist} numberOfLines={1}>
+                  {currentTrack.artist}
+                </Text>
               </View>
               <Pressable onPress={() => go("/sonic")} style={styles.iconButton}>
                 <Ionicons name="pulse" size={22} color={COLORS.cyan} />
               </Pressable>
-              <Pressable onPress={() => void music.togglePlayback()} style={styles.iconButton}>
-                <Ionicons name={music.isPlaying ? "pause" : "play"} size={26} color={COLORS.orange} />
+              <Pressable
+                onPress={() => void music.togglePlayback()}
+                style={styles.iconButton}
+              >
+                <Ionicons
+                  name={music.isPlaying ? "pause" : "play"}
+                  size={26}
+                  color={COLORS.orange}
+                />
               </Pressable>
             </View>
           </Pressable>
@@ -391,15 +578,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: SCREEN_PADDING - 8,
     height: 56,
   },
-  iconButton: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  iconButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
-  greeting: { color: COLORS.text, fontSize: 26, fontWeight: "700", marginTop: 4, marginBottom: 20 },
+  greeting: {
+    color: COLORS.text,
+    fontSize: 26,
+    fontWeight: "700",
+    marginTop: 4,
+    marginBottom: 20,
+  },
 
   hero: { height: 180, borderRadius: 16, overflow: "hidden", marginBottom: 24 },
   heroGradient: { flex: 1, padding: 20, justifyContent: "center" },
   heroContent: { width: "65%", zIndex: 2 },
   heroTitle: { color: "#FFF", fontSize: 24, lineHeight: 28, fontWeight: "800" },
-  heroSubtitle: { color: "#FFF", fontSize: 14, opacity: 0.9, marginTop: 4, marginBottom: 16 },
+  heroSubtitle: {
+    color: "#FFF",
+    fontSize: 14,
+    opacity: 0.9,
+    marginTop: 4,
+    marginBottom: 16,
+  },
   heroButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -413,7 +617,11 @@ const styles = StyleSheet.create({
   heroButtonText: { color: COLORS.background, fontSize: 13, fontWeight: "700" },
   heroIcon: { position: "absolute", right: -20, bottom: -20 },
 
-  quickRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 12 },
+  quickRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
   quickItem: { alignItems: "center", gap: 8 },
   quickIcon: {
     width: 56,
@@ -438,7 +646,12 @@ const styles = StyleSheet.create({
   seeAll: { color: COLORS.orange, fontSize: 13, fontWeight: "600" },
 
   grid: { flexDirection: "row", flexWrap: "wrap", gap: GAP },
-  cardTitle: { color: COLORS.text, fontSize: 13, fontWeight: "600", marginTop: 8 },
+  cardTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: "600",
+    marginTop: 8,
+  },
   cardSubtitle: { color: COLORS.muted, fontSize: 12, marginTop: 2 },
 
   list: { gap: 4 },
@@ -476,7 +689,12 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     overflow: "hidden",
   },
-  miniRow: { flex: 1, flexDirection: "row", alignItems: "center", paddingLeft: 10 },
+  miniRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 10,
+  },
   miniInfo: { flex: 1, marginHorizontal: 12 },
   miniTitle: { color: COLORS.text, fontSize: 14, fontWeight: "600" },
   miniArtist: { color: COLORS.muted, fontSize: 12, marginTop: 2 },

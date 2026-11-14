@@ -8,6 +8,7 @@ import {
   FlatList,
   Image,
   Modal,
+  Pressable as RNPressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -46,16 +47,40 @@ const GRADIENTS = [
 const SEARCH_DEBOUNCE_MS = 180;
 const SONG_ROW_HEIGHT = 56;
 
-// ✅ FIXED: handles both seconds and milliseconds safely
+type SortOption = "A-Z" | "Z-A" | "Newest" | "Oldest";
+
+type DurationFilter =
+  | "all"
+  | "under1"
+  | "1to3"
+  | "3to5"
+  | "5to10"
+  | "over10";
+
+const DURATION_FILTERS: {
+  key: DurationFilter;
+  label: string;
+  test: (s: number) => boolean;
+}[] = [
+  { key: "all", label: "All durations", test: () => true },
+  { key: "under1", label: "Under 1 min", test: (s) => s > 0 && s < 60 },
+  { key: "1to3", label: "1 – 3 min", test: (s) => s >= 60 && s < 180 },
+  { key: "3to5", label: "3 – 5 min", test: (s) => s >= 180 && s < 300 },
+  { key: "5to10", label: "5 – 10 min", test: (s) => s >= 300 && s < 600 },
+  { key: "over10", label: "Over 10 min", test: (s) => s >= 600 },
+];
+
 function formatDuration(seconds: number) {
   if (!Number.isFinite(seconds) || seconds <= 0) return "0:00";
-
-  // If the value looks like milliseconds (larger than 10 hours), convert it
   let totalSec = seconds > 36000 ? seconds / 1000 : seconds;
-
   const minutes = Math.floor(totalSec / 60);
   const remainingSeconds = Math.floor(totalSec % 60);
   return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function normalizeDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0;
+  return seconds > 36000 ? seconds / 1000 : seconds;
 }
 
 function cleanFilename(filename: string) {
@@ -83,6 +108,10 @@ function renderTargetIcon(size = 24) {
     </View>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*                             Memoized song row                              */
+/* -------------------------------------------------------------------------- */
 
 type SongRowProps = {
   track: DeviceTrack;
@@ -147,6 +176,10 @@ const SongRow = memo(
     prev.onOptions === next.onOptions
 );
 
+/* -------------------------------------------------------------------------- */
+/*                              Library screen                                */
+/* -------------------------------------------------------------------------- */
+
 export default function LibraryScreen() {
   const router = useRouter();
   const music = useMusic();
@@ -165,6 +198,12 @@ export default function LibraryScreen() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedTrack, setSelectedTrack] = useState<DeviceTrack | null>(null);
 
+  // Filtering & Sorting state
+  const [sortBy, setSortBy] = useState<SortOption>("A-Z");
+  const [showSortModal, setShowSortModal] = useState(false);
+  const [durationFilter, setDurationFilter] = useState<DurationFilter>("all");
+  const [showFilterModal, setShowFilterModal] = useState(false);
+
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
@@ -182,46 +221,101 @@ export default function LibraryScreen() {
     }
   }, [music.hasScanned, music.isScanning, music.scanDeviceMusic]);
 
+  // Duration matcher (memoized)
+  const matchesDuration = useCallback(
+    (track: DeviceTrack) => {
+      const opt = DURATION_FILTERS.find((d) => d.key === durationFilter)!;
+      return opt.test(normalizeDuration(track.duration));
+    },
+    [durationFilter]
+  );
+
+  // Helper sorting function
+  const sortList = useCallback(
+    <T extends { name: string; date?: number }>(list: T[]) => {
+      return [...list].sort((a, b) => {
+        if (sortBy === "A-Z") return a.name.localeCompare(b.name);
+        if (sortBy === "Z-A") return b.name.localeCompare(a.name);
+        if (sortBy === "Newest") return (b.date || 0) - (a.date || 0);
+        if (sortBy === "Oldest") return (a.date || 0) - (b.date || 0);
+        return 0;
+      });
+    },
+    [sortBy]
+  );
+
   const visibleTracks = useMemo(() => {
     let result = music.tracks;
     const query = debouncedSearch.trim().toLowerCase();
     if (query) {
-      result = result.filter((track) =>
-        cleanFilename(track.filename).toLowerCase().includes(query)
+      result = result.filter(
+        (track) =>
+          cleanFilename(track.filename).toLowerCase().includes(query) ||
+          track.artist.toLowerCase().includes(query) ||
+          track.album.toLowerCase().includes(query)
       );
     }
+
+    // Duration filter
+    result = result.filter(matchesDuration);
+
+    // Apply Sorting
+    result = [...result].sort((a, b) => {
+      if (sortBy === "A-Z") return a.filename.localeCompare(b.filename);
+      if (sortBy === "Z-A") return b.filename.localeCompare(a.filename);
+      return 0; // Newest/Oldest relies on creation date which we don't have in DeviceTrack yet
+    });
+
     return result;
-  }, [music.tracks, debouncedSearch]);
+  }, [music.tracks, debouncedSearch, sortBy, matchesDuration]);
 
   const groupedArtists = useMemo(() => {
     const map = new Map<string, DeviceTrack[]>();
-    music.tracks.forEach((track) => {
+    music.tracks.filter(matchesDuration).forEach((track) => {
       const key = track.artist || "Unknown Artist";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(track);
     });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [music.tracks]);
+
+    let result = Array.from(map.entries()).map(([name, tracks]) => ({
+      name,
+      tracks,
+    }));
+    result = sortList(result);
+    return result;
+  }, [music.tracks, sortBy, matchesDuration, sortList]);
 
   const groupedAlbums = useMemo(() => {
     const map = new Map<string, DeviceTrack[]>();
-    music.tracks.forEach((track) => {
+    music.tracks.filter(matchesDuration).forEach((track) => {
       const key = track.album || "Unknown Album";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(track);
     });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [music.tracks]);
+
+    let result = Array.from(map.entries()).map(([name, tracks]) => ({
+      name,
+      tracks,
+    }));
+    result = sortList(result);
+    return result;
+  }, [music.tracks, sortBy, matchesDuration, sortList]);
 
   const groupedFolders = useMemo(() => {
     const map = new Map<string, DeviceTrack[]>();
-    music.tracks.forEach((track) => {
+    music.tracks.filter(matchesDuration).forEach((track) => {
       const key = track.folder || "Unknown Folder";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(track);
     });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [music.tracks]);
+
+    let result = Array.from(map.entries()).map(([name, tracks]) => ({
+      name,
+      tracks,
+    }));
+    result = sortList(result);
+    return result;
+  }, [music.tracks, sortBy, matchesDuration, sortList]);
 
   const currentTrackId = music.currentTrack?.id;
   const isPlaying = music.isPlaying;
@@ -257,20 +351,14 @@ export default function LibraryScreen() {
 
   const handleAddToPlaylist = useCallback(() => {
     if (!selectedTrack) return;
-
     if (playlists.length === 0) {
       setSelectedTrack(null);
-      Alert.alert(
-        "No playlists yet",
-        "Create a playlist first to add tracks.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Create", onPress: () => router.push("/create-playlist") },
-        ]
-      );
+      Alert.alert("No playlists yet", "Create a playlist first to add tracks.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Create", onPress: () => router.push("/create-playlist") },
+      ]);
       return;
     }
-
     const buttons = playlists.map((p) => ({
       text: `Add to ${p.name}`,
       onPress: async () => {
@@ -284,7 +372,6 @@ export default function LibraryScreen() {
       },
     }));
     buttons.push({ text: "Cancel", style: "cancel" } as any);
-
     Alert.alert("Add to playlist", "Choose a playlist", buttons);
   }, [playlists, selectedTrack, addTrackToPlaylist, router]);
 
@@ -307,6 +394,12 @@ export default function LibraryScreen() {
     [currentTrackId, isPlaying, handleTrackPress, handleTrackOptions]
   );
 
+  const durationLabel =
+    DURATION_FILTERS.find((d) => d.key === durationFilter)?.label ??
+    "All durations";
+
+  const hasActiveFilter = durationFilter !== "all";
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.container}>
@@ -316,9 +409,19 @@ export default function LibraryScreen() {
           </Pressable>
           <Text style={styles.headerTitle}>Music Library</Text>
           <View style={{ flexDirection: "row", gap: 15, alignItems: "center" }}>
-            <Pressable onPress={() => router.push("/equalizer")} hitSlop={10}>
+            {/* Duration filter */}
+            <Pressable onPress={() => setShowFilterModal(true)} hitSlop={10}>
+              <Ionicons
+                name={hasActiveFilter ? "funnel" : "funnel-outline"}
+                size={22}
+                color={hasActiveFilter ? COLORS.orange : COLORS.text}
+              />
+            </Pressable>
+            {/* Sort */}
+            <Pressable onPress={() => setShowSortModal(true)} hitSlop={10}>
               <Ionicons name="options-outline" size={24} color={COLORS.text} />
             </Pressable>
+            {/* Search */}
             <Pressable onPress={() => router.push("/search")} hitSlop={10}>
               <Ionicons name="search" size={24} color={COLORS.text} />
             </Pressable>
@@ -398,57 +501,75 @@ export default function LibraryScreen() {
                     <Text style={styles.listCount}>
                       {groupedArtists.length} artists
                     </Text>
-                    <Pressable
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 4,
-                      }}
-                    >
-                      <Ionicons name="filter" size={14} color={COLORS.text} />
-                      <Text style={styles.sortText}>Sort: A-Z</Text>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.listContainer}>
-                    {groupedArtists.map(([artist, tracks], index) => (
+                    <View style={styles.headerActions}>
                       <Pressable
-                        key={artist}
-                        style={styles.artistRow}
-                        onPress={() =>
-                          router.push(`/artist/${encodeURIComponent(artist)}`)
-                        }
+                        onPress={() => setShowFilterModal(true)}
+                        style={styles.headerActionBtn}
                       >
-                        <LinearGradient
-                          colors={
-                            GRADIENTS[index % GRADIENTS.length] as [
-                              string,
-                              string
-                            ]
-                          }
-                          style={styles.artistAvatar}
+                        <Ionicons
+                          name="funnel-outline"
+                          size={14}
+                          color={hasActiveFilter ? COLORS.orange : COLORS.text}
+                        />
+                        <Text
+                          style={[
+                            styles.sortText,
+                            hasActiveFilter && { color: COLORS.orange },
+                          ]}
                         >
-                          {renderTargetIcon(20)}
-                        </LinearGradient>
-                        <View style={styles.artistInfo}>
-                          <Text style={styles.artistName} numberOfLines={1}>
-                            {artist}
-                          </Text>
-                          <Text style={styles.artistTracks}>
-                            {tracks.length}{" "}
-                            {tracks.length === 1 ? "track" : "tracks"}
-                          </Text>
-                        </View>
-                        <Pressable hitSlop={10} style={{ padding: 10 }}>
-                          <Ionicons
-                            name="ellipsis-vertical"
-                            size={20}
-                            color={COLORS.muted}
-                          />
-                        </Pressable>
+                          {durationLabel}
+                        </Text>
                       </Pressable>
-                    ))}
+                      <Pressable
+                        onPress={() => setShowSortModal(true)}
+                        style={styles.headerActionBtn}
+                      >
+                        <Ionicons name="filter" size={14} color={COLORS.text} />
+                        <Text style={styles.sortText}>Sort: {sortBy}</Text>
+                      </Pressable>
+                    </View>
                   </View>
+                  {groupedArtists.length === 0 ? (
+                    <Text style={styles.emptyText}>No artists found.</Text>
+                  ) : (
+                    <View style={styles.listContainer}>
+                      {groupedArtists.map(({ name, tracks }, index) => (
+                        <Pressable
+                          key={name}
+                          style={styles.artistRow}
+                          onPress={() =>
+                            router.push(
+                              `/artist/${encodeURIComponent(name)}`
+                            )
+                          }
+                        >
+                          <LinearGradient
+                            colors={
+                              GRADIENTS[index % GRADIENTS.length] as [
+                                string,
+                                string
+                              ]
+                            }
+                            style={styles.artistAvatar}
+                          >
+                            {renderTargetIcon(20)}
+                          </LinearGradient>
+                          <View style={styles.artistInfo}>
+                            <Text
+                              style={styles.artistName}
+                              numberOfLines={1}
+                            >
+                              {name}
+                            </Text>
+                            <Text style={styles.artistTracks}>
+                              {tracks.length}{" "}
+                              {tracks.length === 1 ? "track" : "tracks"}
+                            </Text>
+                          </View>
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
                 </>
               )}
 
@@ -458,50 +579,70 @@ export default function LibraryScreen() {
                     <Text style={styles.listCount}>
                       {groupedAlbums.length} albums
                     </Text>
-                    <Pressable
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 4,
-                      }}
-                    >
-                      <Ionicons name="filter" size={14} color={COLORS.text} />
-                      <Text style={styles.sortText}>Sort: A-Z</Text>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.grid}>
-                    {groupedAlbums.map(([album, tracks], index) => (
+                    <View style={styles.headerActions}>
                       <Pressable
-                        key={album}
-                        style={styles.albumCard}
-                        onPress={() =>
-                          router.push(`/album/${encodeURIComponent(album)}`)
-                        }
+                        onPress={() => setShowFilterModal(true)}
+                        style={styles.headerActionBtn}
                       >
-                        <LinearGradient
-                          colors={
-                            GRADIENTS[index % GRADIENTS.length] as [
-                              string,
-                              string
-                            ]
-                          }
-                          style={styles.albumCover}
+                        <Ionicons
+                          name="funnel-outline"
+                          size={14}
+                          color={hasActiveFilter ? COLORS.orange : COLORS.text}
+                        />
+                        <Text
+                          style={[
+                            styles.sortText,
+                            hasActiveFilter && { color: COLORS.orange },
+                          ]}
                         >
-                          {renderTargetIcon(56)}
-                        </LinearGradient>
-                        <Text style={styles.albumTitle} numberOfLines={1}>
-                          {album}
-                        </Text>
-                        <Text style={styles.albumMeta} numberOfLines={1}>
-                          {tracks[0]?.artist || "Unknown Artist"} · 2024
-                        </Text>
-                        <Text style={styles.albumTracks}>
-                          {tracks.length} tracks
+                          {durationLabel}
                         </Text>
                       </Pressable>
-                    ))}
+                      <Pressable
+                        onPress={() => setShowSortModal(true)}
+                        style={styles.headerActionBtn}
+                      >
+                        <Ionicons name="filter" size={14} color={COLORS.text} />
+                        <Text style={styles.sortText}>Sort: {sortBy}</Text>
+                      </Pressable>
+                    </View>
                   </View>
+                  {groupedAlbums.length === 0 ? (
+                    <Text style={styles.emptyText}>No albums found.</Text>
+                  ) : (
+                    <View style={styles.grid}>
+                      {groupedAlbums.map(({ name, tracks }, index) => (
+                        <Pressable
+                          key={name}
+                          style={styles.albumCard}
+                          onPress={() =>
+                            router.push(`/album/${encodeURIComponent(name)}`)
+                          }
+                        >
+                          <LinearGradient
+                            colors={
+                              GRADIENTS[index % GRADIENTS.length] as [
+                                string,
+                                string
+                              ]
+                            }
+                            style={styles.albumCover}
+                          >
+                            {renderTargetIcon(56)}
+                          </LinearGradient>
+                          <Text style={styles.albumTitle} numberOfLines={1}>
+                            {name}
+                          </Text>
+                          <Text style={styles.albumMeta} numberOfLines={1}>
+                            {tracks[0]?.artist || "Unknown Artist"} · 2024
+                          </Text>
+                          <Text style={styles.albumTracks}>
+                            {tracks.length} tracks
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
                 </>
               )}
 
@@ -511,73 +652,90 @@ export default function LibraryScreen() {
                     <Text style={styles.listCount}>
                       {groupedFolders.length} folders
                     </Text>
-                    <Pressable
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 4,
-                      }}
-                    >
-                      <Ionicons name="filter" size={14} color={COLORS.text} />
-                      <Text style={styles.sortText}>Sort: A-Z</Text>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.folderListContainer}>
-                    {groupedFolders.map(([folder, tracks]) => {
-                      const parts = folder.split("/");
-                      const folderName =
-                        parts[parts.length - 1] || "Unknown Folder";
-                      const isSdCard =
-                        folder.includes("sdcard") ||
-                        folder.includes("external");
-                      const storageType = isSdCard ? "SD card" : "Internal";
-
-                      return (
-                        <Pressable
-                          key={folder}
-                          style={styles.folderRow}
-                          onPress={() =>
-                            router.push(
-                              `/folder/${encodeURIComponent(folder)}`
-                            )
-                          }
+                    <View style={styles.headerActions}>
+                      <Pressable
+                        onPress={() => setShowFilterModal(true)}
+                        style={styles.headerActionBtn}
+                      >
+                        <Ionicons
+                          name="funnel-outline"
+                          size={14}
+                          color={hasActiveFilter ? COLORS.orange : COLORS.text}
+                        />
+                        <Text
+                          style={[
+                            styles.sortText,
+                            hasActiveFilter && { color: COLORS.orange },
+                          ]}
                         >
-                          <View style={styles.folderIconWrap}>
-                            <Ionicons
-                              name="folder-outline"
-                              size={22}
-                              color={COLORS.orange}
-                            />
-                          </View>
-
-                          <View style={styles.folderInfo}>
-                            <Text
-                              style={styles.folderName}
-                              numberOfLines={1}
-                            >
-                              {folderName}
-                            </Text>
-                            <Text
-                              style={styles.folderPath}
-                              numberOfLines={1}
-                            >
-                              {folder}
-                            </Text>
-                          </View>
-
-                          <View style={styles.folderMeta}>
-                            <Text style={styles.folderCount}>
-                              {tracks.length} songs
-                            </Text>
-                            <Text style={styles.folderStorage}>
-                              {storageType}
-                            </Text>
-                          </View>
-                        </Pressable>
-                      );
-                    })}
+                          {durationLabel}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => setShowSortModal(true)}
+                        style={styles.headerActionBtn}
+                      >
+                        <Ionicons name="filter" size={14} color={COLORS.text} />
+                        <Text style={styles.sortText}>Sort: {sortBy}</Text>
+                      </Pressable>
+                    </View>
                   </View>
+                  {groupedFolders.length === 0 ? (
+                    <Text style={styles.emptyText}>No folders found.</Text>
+                  ) : (
+                    <View style={styles.folderListContainer}>
+                      {groupedFolders.map(({ name: folder, tracks }) => {
+                        const parts = folder.split("/");
+                        const folderName =
+                          parts[parts.length - 1] || "Unknown Folder";
+                        const isSdCard =
+                          folder.includes("sdcard") ||
+                          folder.includes("external");
+                        const storageType = isSdCard ? "SD card" : "Internal";
+                        return (
+                          <Pressable
+                            key={folder}
+                            style={styles.folderRow}
+                            onPress={() =>
+                              router.push(
+                                `/folder/${encodeURIComponent(folder)}`
+                              )
+                            }
+                          >
+                            <View style={styles.folderIconWrap}>
+                              <Ionicons
+                                name="folder-outline"
+                                size={22}
+                                color={COLORS.orange}
+                              />
+                            </View>
+                            <View style={styles.folderInfo}>
+                              <Text
+                                style={styles.folderName}
+                                numberOfLines={1}
+                              >
+                                {folderName}
+                              </Text>
+                              <Text
+                                style={styles.folderPath}
+                                numberOfLines={1}
+                              >
+                                {folder}
+                              </Text>
+                            </View>
+                            <View style={styles.folderMeta}>
+                              <Text style={styles.folderCount}>
+                                {tracks.length} songs
+                              </Text>
+                              <Text style={styles.folderStorage}>
+                                {storageType}
+                              </Text>
+                            </View>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  )}
                 </>
               )}
 
@@ -599,7 +757,6 @@ export default function LibraryScreen() {
                       color={COLORS.muted}
                     />
                   </Pressable>
-
                   {playlists.map((p, index) => (
                     <Pressable
                       key={p.id}
@@ -617,7 +774,11 @@ export default function LibraryScreen() {
                             (p.cover_gradient?.split(",") as [
                               string,
                               string
-                            ]) ?? GRADIENTS[index % GRADIENTS.length]
+                            ]) ??
+                            (GRADIENTS[index % GRADIENTS.length] as [
+                              string,
+                              string
+                            ])
                           }
                           style={styles.categoryAvatar}
                         >
@@ -696,6 +857,91 @@ export default function LibraryScreen() {
         }
       />
 
+      {/* SORT MODAL */}
+      <Modal
+        visible={showSortModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSortModal(false)}
+      >
+        <RNPressable
+          style={styles.modalOverlay}
+          onPress={() => setShowSortModal(false)}
+        >
+          <View style={styles.sortCard}>
+            <Text style={styles.sortTitle}>Sort by</Text>
+            {(["A-Z", "Z-A", "Newest", "Oldest"] as SortOption[]).map((opt) => (
+              <Pressable
+                key={opt}
+                style={styles.sortRow}
+                onPress={() => {
+                  setSortBy(opt);
+                  setShowSortModal(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.sortOptionText,
+                    sortBy === opt && {
+                      color: COLORS.orange,
+                      fontWeight: "700",
+                    },
+                  ]}
+                >
+                  {opt}
+                </Text>
+                {sortBy === opt && (
+                  <Ionicons name="checkmark" size={20} color={COLORS.orange} />
+                )}
+              </Pressable>
+            ))}
+          </View>
+        </RNPressable>
+      </Modal>
+
+      {/* DURATION FILTER MODAL */}
+      <Modal
+        visible={showFilterModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFilterModal(false)}
+      >
+        <RNPressable
+          style={styles.modalOverlay}
+          onPress={() => setShowFilterModal(false)}
+        >
+          <View style={styles.sortCard}>
+            <Text style={styles.sortTitle}>Filter by duration</Text>
+            {DURATION_FILTERS.map((opt) => (
+              <Pressable
+                key={opt.key}
+                style={styles.sortRow}
+                onPress={() => {
+                  setDurationFilter(opt.key);
+                  setShowFilterModal(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.sortOptionText,
+                    durationFilter === opt.key && {
+                      color: COLORS.orange,
+                      fontWeight: "700",
+                    },
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+                {durationFilter === opt.key && (
+                  <Ionicons name="checkmark" size={20} color={COLORS.orange} />
+                )}
+              </Pressable>
+            ))}
+          </View>
+        </RNPressable>
+      </Modal>
+
+      {/* TRACK OPTIONS MODAL */}
       <Modal
         visible={!!selectedTrack}
         transparent
@@ -725,7 +971,6 @@ export default function LibraryScreen() {
               />
               <Text style={styles.optionText}>Add to favourites</Text>
             </Pressable>
-
             <Pressable
               style={styles.optionRow}
               onPress={() => {
@@ -736,7 +981,6 @@ export default function LibraryScreen() {
               <Ionicons name="add" size={20} color={COLORS.text} />
               <Text style={styles.optionText}>Add to playlist</Text>
             </Pressable>
-
             <Pressable
               style={styles.optionRow}
               onPress={() => setSelectedTrack(null)}
@@ -748,7 +992,6 @@ export default function LibraryScreen() {
               />
               <Text style={styles.optionText}>Play next</Text>
             </Pressable>
-
             <Pressable
               style={styles.optionRow}
               onPress={() => setSelectedTrack(null)}
@@ -756,7 +999,6 @@ export default function LibraryScreen() {
               <Ionicons name="list-outline" size={20} color={COLORS.text} />
               <Text style={styles.optionText}>Add to queue</Text>
             </Pressable>
-
             <Pressable
               style={styles.optionRow}
               onPress={() => {
@@ -764,40 +1006,10 @@ export default function LibraryScreen() {
                 router.push("/equalizer");
               }}
             >
-              <Ionicons
-                name="options-outline"
-                size={20}
-                color={COLORS.text}
-              />
-              <Text style={styles.optionText}>Set equalizer for this song</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.optionRow}
-              onPress={() => setSelectedTrack(null)}
-            >
-              <Ionicons name="person-outline" size={20} color={COLORS.text} />
-              <Text style={styles.optionText}>View artist</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.optionRow}
-              onPress={() => setSelectedTrack(null)}
-            >
-              <Ionicons name="disc-outline" size={20} color={COLORS.text} />
-              <Text style={styles.optionText}>View album</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.optionRow}
-              onPress={() => setSelectedTrack(null)}
-            >
-              <Ionicons
-                name="information-circle-outline"
-                size={20}
-                color={COLORS.text}
-              />
-              <Text style={styles.optionText}>Track information</Text>
+              <Ionicons name="options-outline" size={20} color={COLORS.text} />
+              <Text style={styles.optionText}>
+                Set equalizer for this song
+              </Text>
             </Pressable>
           </View>
         </Pressable>
@@ -841,6 +1053,12 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   listCount: { color: COLORS.text, fontSize: 12, fontWeight: "500" },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 14 },
+  headerActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
   sortText: { color: COLORS.text, fontSize: 12, fontWeight: "500" },
   listContainer: { gap: 0 },
   songRow: {
@@ -1027,12 +1245,10 @@ const styles = StyleSheet.create({
   miniTitle: { color: COLORS.text, fontSize: 13, fontWeight: "600" },
   miniArtist: { color: COLORS.muted, fontSize: 11, marginTop: 2 },
   miniControls: { flexDirection: "row", alignItems: "center" },
-  progressBarBackground: {
-    height: 2,
-    backgroundColor: "#333",
-    width: "100%",
-  },
+  progressBarBackground: { height: 2, backgroundColor: "#333", width: "100%" },
   progressBarFill: { height: 2, backgroundColor: COLORS.orange },
+
+  // Modals
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",
@@ -1053,4 +1269,27 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   optionText: { color: COLORS.text, fontSize: 13, fontWeight: "500" },
+
+  // Sort / Filter Modal
+  sortCard: {
+    width: 280,
+    backgroundColor: "#1A1A1E",
+    borderRadius: 12,
+    paddingVertical: 8,
+  },
+  sortTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: "700",
+    padding: 16,
+    paddingBottom: 8,
+  },
+  sortRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  sortOptionText: { color: COLORS.text, fontSize: 14, fontWeight: "500" },
 });

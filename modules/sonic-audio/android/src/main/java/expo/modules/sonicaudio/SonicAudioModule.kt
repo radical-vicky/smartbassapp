@@ -1,5 +1,6 @@
 ﻿package expo.modules.sonicaudio
 
+import android.media.audiofx.AudioEffect
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.media.audiofx.LoudnessEnhancer
@@ -21,10 +22,11 @@ class SonicAudioModule : Module() {
   private var bassAmount = 0
   private var spatialAmount = 0
   private var clarityAmount = 0
-  private var preampAmount = 0 
-  
+  private var preampAmount = 0
+
   private var equalizerError = ""
   private var spatialError = ""
+  private var preampError = ""
   private var lastDiagnostics = ""
   private var eqLevelsDb = MutableList(16) { 0.0 }
 
@@ -85,20 +87,55 @@ class SonicAudioModule : Module() {
   }
 
   private fun attachSession(newSessionId: Int) {
+    // Do NOT destroy effects if we're already on this session — this is what was
+    // causing audible dropouts and effect re-creation glitches on every play().
+    if (newSessionId == sessionId && equalizer != null && sessionId > 0) {
+      lastDiagnostics = "attach:reuse session=$sessionId"
+      applyAllEffects()
+      return
+    }
+
     releaseEffects()
     sessionId = newSessionId
-    
-    if (newSessionId > 0) {
-      try { equalizer = Equalizer(0, newSessionId) } catch (e: Exception) { equalizerError = e.message ?: "" }
-      try { virtualizer = Virtualizer(0, newSessionId) } catch (e: Exception) { spatialError = e.message ?: "" }
-      try { loudnessEnhancer = LoudnessEnhancer(newSessionId) } catch (e: Exception) { Log.w(TAG, "LE failed") }
-      applyAllEffects()
+    lastDiagnostics = "attach:new session=$newSessionId"
+
+    if (newSessionId <= 0) return
+
+    // Order matters: Virtualizer first, then Equalizer, then LoudnessEnhancer.
+    // Android limits the number of effects per session and some OEMs fail if
+    // LoudnessEnhancer grabs the session before EQ/Virtualizer.
+    try {
+      virtualizer = Virtualizer(0, newSessionId).also {
+        it.enabled = false
+        if (!it.strengthSupported) spatialError = "strength not supported"
+      }
+    } catch (e: Exception) {
+      spatialError = e.message ?: "Virtualizer ctor failed"
     }
+
+    try {
+      equalizer = Equalizer(0, newSessionId).also {
+        it.enabled = false
+      }
+    } catch (e: Exception) {
+      equalizerError = e.message ?: "Equalizer ctor failed"
+    }
+
+    try {
+      loudnessEnhancer = LoudnessEnhancer(newSessionId).also {
+        it.enabled = false
+      }
+    } catch (e: Exception) {
+      preampError = e.message ?: "LoudnessEnhancer ctor failed"
+    }
+
+    applyAllEffects()
   }
 
   private fun applyAllEffects() {
+    if (sessionId <= 0) return
     applyEqualizer()
-    applySpatial() // <--- THIS IS THE BOOM 3D EFFECT
+    applySpatial()
     applyPreamp()
   }
 
@@ -117,38 +154,52 @@ class SonicAudioModule : Module() {
       )
 
       for (band in 0 until bandCount) {
+        // getCenterFreq returns MILLIHERTZ on Android. Do NOT divide by 1000 here
+        // and then compare against Hz targets — convert to Hz once, clearly.
         val frequencyHz = effect.getCenterFreq(band.toShort()).toDouble() / 1000.0
+
+        // Interpolate the 16-band curve down to whatever hardware bands exist.
         var gainDb = interpolateGain(frequencyHz, targetFrequencies)
 
+        // Bass contribution — bake it into the EQ so it's audible on all
+        // hardware, not just those with a dedicated BassBoost effect.
         if (bassAmount > 0) {
-          if (frequencyHz <= 31.5) gainDb += bassAmount * 0.20 
-          else if (frequencyHz <= 63.0) gainDb += bassAmount * 0.15
-          else if (frequencyHz <= 100.0) gainDb += bassAmount * 0.08
+          when {
+            frequencyHz <= 40.0  -> gainDb += bassAmount * 0.22
+            frequencyHz <= 63.0  -> gainDb += bassAmount * 0.16
+            frequencyHz <= 100.0 -> gainDb += bassAmount * 0.10
+            frequencyHz <= 160.0 -> gainDb += bassAmount * 0.05
+          }
         }
 
+        // Clarity: lift the presence band.
         if (frequencyHz in 2500.0..10000.0) {
-          gainDb += clarityAmount * 0.02 
+          gainDb += clarityAmount * 0.03
         }
+
+        // Preamp gain (dB) — do NOT multiply by 100 here; it's already in dB.
+        gainDb += preampAmount.toDouble()
 
         val levelMillibels = (gainDb * 100.0).toInt().coerceIn(minimum, maximum)
         effect.setBandLevel(band.toShort(), levelMillibels.toShort())
       }
       effect.enabled = sonicEnabled
     } catch (e: Exception) {
-      equalizerError = e.message ?: ""
+      equalizerError = e.message ?: "applyEqualizer failed"
     }
   }
 
   private fun applyPreamp() {
     val effect = loudnessEnhancer ?: return
     try {
-      val bassVolumeSurge = if (bassAmount > 0) (bassAmount * 15) else 0
-      val totalGainMb = (preampAmount * 100) + bassVolumeSurge
+      // LoudnessEnhancer gain is in millibels (mB). Use only the explicit
+      // preamp here — bass is already handled in the equalizer above.
+      val totalGainMb = (preampAmount * 100)
       val finalGain = totalGainMb.coerceIn(-1200, 1500)
       effect.setTargetGain(finalGain)
-      effect.enabled = sonicEnabled
+      effect.enabled = sonicEnabled && preampAmount != 0
     } catch (e: Exception) {
-      Log.w(TAG, "LoudnessEnhancer error: ${e.message}")
+      preampError = e.message ?: "LoudnessEnhancer failed"
     }
   }
 
@@ -156,13 +207,12 @@ class SonicAudioModule : Module() {
     val effect = virtualizer ?: return
     try {
       if (effect.strengthSupported) {
-        // BOOM MODE: We push the virtualizer to the max to widen the stereo field
         val strength = (spatialAmount * 10).coerceIn(0, 1000).toShort()
         effect.setStrength(strength)
       }
       effect.enabled = sonicEnabled && spatialAmount > 0
     } catch (e: Exception) {
-      spatialError = e.message ?: ""
+      spatialError = e.message ?: "Virtualizer failed"
     }
   }
 
@@ -184,11 +234,11 @@ class SonicAudioModule : Module() {
     val eqBands = try { equalizer?.numberOfBands?.toInt() ?: 0 } catch (e: Exception) { 0 }
     val range = try { equalizer?.bandLevelRange } catch (e: Exception) { null }
     return mapOf(
-      "attached" to (sessionId > 0),
+      "attached" to (sessionId > 0 && equalizer != null),
       "sessionId" to sessionId,
       "enabled" to sonicEnabled,
       "equalizerAvailable" to (eqBands > 0),
-      "bassBoostAvailable" to true,
+      "bassBoostAvailable" to (eqBands > 0), // bass is applied via EQ
       "bassBoostStrengthSupported" to true,
       "spatialAvailable" to (virtualizer != null),
       "spatialStrengthSupported" to (virtualizer?.strengthSupported == true),
@@ -199,18 +249,17 @@ class SonicAudioModule : Module() {
       "bassBoostError" to "",
       "spatialError" to spatialError,
       "bassBoostFallback" to false,
-      "diagnostics" to lastDiagnostics
+      "diagnostics" to "$lastDiagnostics | eqErr=$equalizerError | spErr=$spatialError | preErr=$preampError"
     )
   }
 
   private fun releaseEffects() {
-    try { equalizer?.release() } catch (_: Exception) {}
-    try { virtualizer?.release() } catch (_: Exception) {}
-    try { loudnessEnhancer?.release() } catch (_: Exception) {}
+    try { equalizer?.enabled = false; equalizer?.release() } catch (_: Exception) {}
+    try { virtualizer?.enabled = false; virtualizer?.release() } catch (_: Exception) {}
+    try { loudnessEnhancer?.enabled = false; loudnessEnhancer?.release() } catch (_: Exception) {}
     equalizer = null; virtualizer = null; loudnessEnhancer = null
   }
 
-  // Reflection logic remains the same...
   private fun findPlayerSessionId(): Int {
     return try {
       val holder = listOf("ExpoAudio", "AudioModule", "Audio").firstNotNullOfOrNull {
@@ -241,11 +290,7 @@ class SonicAudioModule : Module() {
     var type: Class<*>? = target.javaClass
     while (type != null && type != Any::class.java) {
       for (field in type.declaredFields) {
-        try {
-          field.isAccessible = true
-          val value = field.get(target)
-          if (value != null) { val id = searchSessionId(value, depth + 1, visited); if (id > 0) return id }
-        } catch (_: Throwable) {}
+        try { field.isAccessible = true; val value = field.get(target); if (value != null) { val id = searchSessionId(value, depth + 1, visited); if (id > 0) return id } } catch (_: Throwable) {}
       }
       type = type.superclass
     }

@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { InputField } from '../components/InputField';
-import { supabase } from '../lib/supabase'; // Ensure this path is correct
+import { supabase } from '../lib/supabase';
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -36,7 +36,10 @@ export default function RegisterScreen() {
       Alert.alert('Registration Failed', error.message);
     } else {
       Alert.alert('Success', 'Account created successfully!');
-      router.replace('/login');
+      // Removed router.replace('/login') — the RootLayout will automatically
+      // detect the new session and route them to /home if email confirmations 
+      // are disabled in Supabase. If email confirmations are enabled, they 
+      // will be redirected to /login by the RootLayout.
     }
   };
 
@@ -61,7 +64,7 @@ export default function RegisterScreen() {
 
       <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
         <InputField label="Full name" placeholder="Your name" value={fullName} onChangeText={setFullName} />
-        <InputField label="Email" placeholder="name@example.com" value={email} onChangeText={setEmail} keyboardType="email-address" />
+        <InputField label="Email" placeholder="name@example.com" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" />
         <InputField label="Password" placeholder="Password" value={password} onChangeText={setPassword} isPassword />
         <InputField label="Confirm password" placeholder="Confirm password" value={confirmPassword} onChangeText={setConfirmPassword} isPassword />
 

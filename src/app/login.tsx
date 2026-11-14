@@ -3,18 +3,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TouchableWithoutFeedback,
-    View
+  ActivityIndicator,
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableWithoutFeedback,
+  View
 } from 'react-native';
 import { InputField } from '../components/InputField';
 import { supabase } from '../lib/supabase';
@@ -36,9 +36,9 @@ export default function LoginScreen() {
 
     if (error) {
       Alert.alert('Login Failed', error.message);
-    } else {
-      router.replace('/home');
     }
+    // Removed router.replace('/home') — the RootLayout handles this automatically 
+    // once it detects the new session.
   };
 
   const handleGoogleLogin = () => {
@@ -49,14 +49,12 @@ export default function LoginScreen() {
   };
 
   return (
-    // KeyboardAvoidingView prevents the keyboard from pushing the layout off-screen
     <KeyboardAvoidingView 
       style={styles.container} 
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <StatusBar barStyle="light-content" />
       
-      {/* ScrollView allows the user to scroll if the keyboard covers the inputs */}
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <ScrollView 
           contentContainerStyle={styles.scrollContent}
@@ -80,6 +78,7 @@ export default function LoginScreen() {
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
+                autoCapitalize="none"
               />
               
               <InputField
@@ -128,15 +127,15 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#08090B' },
   scrollContent: { 
-    flexGrow: 1, // Ensures the content fills the screen even if it's short
+    flexGrow: 1, 
     paddingHorizontal: 24, 
     paddingTop: 60,
-    paddingBottom: 40 // Added padding to bottom so footer doesn't stick to the edge
+    paddingBottom: 40 
   },
   header: { alignItems: 'center', marginBottom: 40 },
   brandTitle: { color: '#FFF', fontSize: 24, fontWeight: '800', letterSpacing: 3 },
   brandSubtitle: { color: '#FF8500', fontSize: 12, fontWeight: '700', letterSpacing: 6, marginTop: 2 },
-  content: { flex: 1 }, // Pushes the footer to the bottom
+  content: { flex: 1 }, 
   title: { color: '#FFF', fontSize: 28, fontWeight: '700', marginBottom: 8 },
   subtitle: { color: '#A0A0A0', fontSize: 14, marginBottom: 30 },
   form: { width: '100%' },
@@ -150,7 +149,7 @@ const styles = StyleSheet.create({
   dividerText: { color: '#666', paddingHorizontal: 12, fontSize: 13 },
   googleBtn: { flexDirection: 'row', width: '100%', height: 54, backgroundColor: '#121212', borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#2A2A2A' },
   googleBtnText: { color: '#FFF', fontSize: 15, fontWeight: '600' },
-  footer: { flexDirection: 'row', justifyContent: 'center', paddingTop: 20 }, // Added padding top to separate from form
+  footer: { flexDirection: 'row', justifyContent: 'center', paddingTop: 20 }, 
   footerText: { color: '#A0A0A0', fontSize: 14 },
   footerLink: { color: '#FF8500', fontSize: 14, fontWeight: '600' },
 });

@@ -4,7 +4,6 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  AppState,
   LayoutChangeEvent,
   Modal,
   Pressable,
@@ -19,12 +18,12 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useMusic } from "../context/MusicContext";
 
 const COLORS = {
-  background: "#121212", // Deep dark grey
-  surface: "#1E1E1E", // Elevated surface
+  background: "#121212",
+  surface: "#1E1E1E",
   surfaceLight: "#2C2C2C",
   text: "#FFFFFF",
   muted: "#888888",
-  orange: "#FF4500", // Sharp deep orange
+  orange: "#FF4500",
   border: "#333333",
 };
 
@@ -33,10 +32,8 @@ const FREQUENCIES_16 = [
   "1k", "1.6k", "2.5k", "4k", "6.3k", "10k", "16k", "20k",
 ];
 
-const FREQUENCIES_8 = ["63", "125", "250", "500", "1k", "2k", "4k", "8k"];
-
-const GRAPH_HEIGHT = 200; 
-const MIN_DB = -15; 
+const GRAPH_HEIGHT = 200;
+const MIN_DB = -15;
 const MAX_DB = 15;
 const RANGE_DB = MAX_DB - MIN_DB;
 const PUSH_INTERVAL_MS = 80;
@@ -61,26 +58,6 @@ const BUILT_IN_PRESETS = [
   "VOCAL",
 ];
 
-const PRESET_VALUES: Record<string, number[]> = {
-  AUTO: [4, 4, 3, 2, 1, 0, 0, 0, 1, 2, 3, 3, 4, 4, 3, 2],
-  FLAT: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  "BASS BOOST": [12, 12, 11, 8, 4, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 4],
-  ACOUSTIC: [6, 5, 4, 2, 1, 0, 0, 0, 1, 2, 3, 4, 5, 5, 4, 3],
-  CLASSICAL: [5, 4, 3, 1, 0, 0, 0, 0, 1, 2, 3, 4, 4, 4, 3, 2],
-  DUBSTEP: [12, 12, 12, 10, 8, 4, 0, -1, 0, 2, 4, 6, 8, 10, 11, 12],
-  ELECTRONIC: [9, 9, 8, 6, 3, 0, 0, 1, 3, 5, 6, 7, 8, 8, 7, 6],
-  "HIP-HOP": [11, 10, 8, 6, 3, 1, 0, -1, 0, 1, 2, 3, 4, 5, 5, 4],
-  HOUSE: [10, 9, 7, 5, 2, 0, 0, 1, 2, 3, 5, 6, 7, 7, 6, 5],
-  JAZZ: [6, 5, 4, 2, 0, -1, -1, 0, 1, 2, 3, 4, 5, 5, 4, 3],
-  MOVIE: [10, 10, 8, 6, 3, 0, -1, -1, 0, 1, 3, 5, 6, 7, 7, 6],
-  PARTY: [12, 11, 9, 7, 4, 1, 0, 0, 1, 3, 5, 7, 8, 9, 9, 8],
-  POP: [7, 6, 5, 3, 0, -1, -1, 0, 1, 3, 4, 5, 6, 6, 5, 4],
-  REGGAE: [11, 10, 8, 5, 2, 0, 0, 0, 0, 1, 2, 3, 4, 4, 5, 5],
-  ROCK: [8, 7, 5, 2, -1, -2, -1, 1, 3, 4, 5, 6, 7, 7, 6, 5],
-  "TREBLE BOOST": [-6, -6, -4, -2, 0, 1, 3, 5, 7, 9, 11, 12, 12, 12, 11, 10],
-  VOCAL: [3, 2, 0, -1, 1, 2, 3, 3, 2, 1, 2, 3, 4, 4, 3, 2],
-};
-
 function cleanFilename(name: string) {
   return name.replace(/\.[^/.]+$/, "").replace(/[_-]+/g, " ").trim();
 }
@@ -93,7 +70,6 @@ export default function EqualizerScreen() {
   const [graphWidth, setGraphWidth] = useState(0);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showNewPresetModal, setShowNewPresetModal] = useState(false);
-  const [is16Band, setIs16Band] = useState(true);
 
   const [customPresets, setCustomPresets] = useState<string[]>([
     "Late Night",
@@ -101,8 +77,6 @@ export default function EqualizerScreen() {
   ]);
 
   const [newPresetName, setNewPresetName] = useState("My preset");
-  const [startFromCurrent, setStartFromCurrent] = useState(true);
-  const [newPresetIs16Band, setNewPresetIs16Band] = useState(true);
 
   const [localLevels, setLocalLevels] = useState<number[]>(music.equalizerLevels);
   const latestLevels = useRef<number[]>(music.equalizerLevels);
@@ -119,36 +93,6 @@ export default function EqualizerScreen() {
     };
   }, []);
 
-  const freqs = is16Band ? FREQUENCIES_16 : FREQUENCIES_8;
-  const bandCount = freqs.length;
-  const levels = is16Band ? localLevels : localLevels.filter((_, i) => i % 2 === 0);
-
-  // Auto-retry attach when screen mounts or app resumes
-  useEffect(() => {
-    const retry = () => {
-      if (
-        music.currentTrack &&
-        music.isPlaying &&
-        (!music.audioCapabilities || !music.audioCapabilities.attached)
-      ) {
-        try {
-          const mod = require("../../modules/sonic-audio/src").default;
-          void mod.attachToPlayer();
-        } catch (e) {}
-      }
-    };
-
-    const initialTimer = setTimeout(retry, 500);
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") retry();
-    });
-
-    return () => {
-      clearTimeout(initialTimer);
-      sub.remove();
-    };
-  }, [music.currentTrack, music.isPlaying, music.audioCapabilities]);
-
   const flushLevels = () => {
     if (pushTimer.current) {
       clearTimeout(pushTimer.current);
@@ -164,18 +108,20 @@ export default function EqualizerScreen() {
   };
 
   const updateBand = (index: number, value: number) => {
-    const i = is16Band ? index : index * 2;
-    if (i < 0 || i > 15) return;
-    if (latestLevels.current[i] === value) return;
+    if (index < 0 || index > 15) return;
+    if (latestLevels.current[index] === value) return;
 
     const next = [...latestLevels.current];
-    next[i] = value;
+    next[index] = value;
     latestLevels.current = next;
 
     setLocalLevels(next);
     void Haptics.selectionAsync();
+    
+    // Optimistically update the context for immediate visual feedback
     music.setEqualizerLevels(next);
 
+    // Throttle the actual native updates
     if (!pushTimer.current) {
       pushTimer.current = setTimeout(() => {
         pushTimer.current = null;
@@ -188,8 +134,8 @@ export default function EqualizerScreen() {
     if (graphWidth === 0 || !music.sonicEnabled) return;
     const x = e.nativeEvent.locationX;
     const index = Math.min(
-      bandCount - 1,
-      Math.max(0, Math.floor((x / graphWidth) * bandCount))
+      15,
+      Math.max(0, Math.floor((x / graphWidth) * 16))
     );
     const y = e.nativeEvent.locationY;
     const clampedY = Math.max(0, Math.min(y, GRAPH_HEIGHT));
@@ -221,20 +167,17 @@ export default function EqualizerScreen() {
 
   const handleSaveNewPreset = () => {
     if (!newPresetName.trim()) return;
-    if (!startFromCurrent) applyLevels(Array(16).fill(0));
-
     setCustomPresets([...customPresets, newPresetName.trim()]);
-    setIs16Band(newPresetIs16Band);
     setShowNewPresetModal(false);
     setNewPresetName("My preset");
   };
 
   const renderBand = (index: number) => {
-    const val = levels[index] ?? 0;
+    const val = localLevels[index] ?? 0;
     const percentFromBottom = ((val - MIN_DB) / RANGE_DB) * 100;
 
     return (
-      <View key={freqs[index]} style={styles.bandColumn}>
+      <View key={FREQUENCIES_16[index]} style={styles.bandColumn}>
         <Text style={styles.bandValue}>
           {val > 0 ? `+${val}` : val}
         </Text>
@@ -245,7 +188,7 @@ export default function EqualizerScreen() {
         <View style={[styles.dotWrapper, { bottom: `${percentFromBottom}%` }]}>
           <View style={styles.dot} />
         </View>
-        <Text style={styles.freqLabel}>{freqs[index]}</Text>
+        <Text style={styles.freqLabel}>{FREQUENCIES_16[index]}</Text>
       </View>
     );
   };
@@ -320,7 +263,7 @@ export default function EqualizerScreen() {
               <View style={[styles.gridLine, { top: GRAPH_HEIGHT / 2 }]} pointerEvents="none" />
               <View style={[styles.gridLine, { bottom: 0 }]} pointerEvents="none" />
               <View style={styles.bandsRow} pointerEvents="none">
-                {freqs.map((_, i) => renderBand(i))}
+                {FREQUENCIES_16.map((_, i) => renderBand(i))}
               </View>
             </View>
           </ScrollView>
@@ -494,24 +437,6 @@ export default function EqualizerScreen() {
             <Text style={styles.newPresetTitle}>New preset</Text>
             <Text style={styles.inputLabel}>Name</Text>
             <TextInput style={styles.presetNameInput} value={newPresetName} onChangeText={setNewPresetName} placeholder="My preset" placeholderTextColor={COLORS.muted} />
-            <Text style={styles.inputLabel}>Start from</Text>
-            <View style={styles.segmentedControl}>
-              <Pressable style={[styles.segmentBtn, startFromCurrent && styles.segmentBtnActive]} onPress={() => setStartFromCurrent(true)}>
-                <Text style={[styles.segmentText, startFromCurrent && styles.segmentTextActive]}>Current settings</Text>
-              </Pressable>
-              <Pressable style={[styles.segmentBtn, !startFromCurrent && styles.segmentBtnActive]} onPress={() => setStartFromCurrent(false)}>
-                <Text style={[styles.segmentText, !startFromCurrent && styles.segmentTextActive]}>Flat</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.inputLabel}>Bands</Text>
-            <View style={styles.segmentedControl}>
-              <Pressable style={[styles.segmentBtn, !newPresetIs16Band && styles.segmentBtnActive]} onPress={() => setNewPresetIs16Band(false)}>
-                <Text style={[styles.segmentText, !newPresetIs16Band && styles.segmentTextActive]}>8 band</Text>
-              </Pressable>
-              <Pressable style={[styles.segmentBtn, newPresetIs16Band && styles.segmentBtnActive]} onPress={() => setNewPresetIs16Band(true)}>
-                <Text style={[styles.segmentText, newPresetIs16Band && styles.segmentTextActive]}>16 band</Text>
-              </Pressable>
-            </View>
             <View style={styles.newPresetActions}>
               <Pressable onPress={() => setShowNewPresetModal(false)} hitSlop={10}>
                 <Text style={styles.cancelBtnText}>CANCEL</Text>
@@ -531,41 +456,26 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 20 },
   headerTitle: { color: COLORS.text, fontSize: 22, fontWeight: "600", flex: 1, letterSpacing: 0.5 },
-  
   content: { paddingBottom: 20 },
-  
-  // Preset Chips (Square edges)
   presetRow: { paddingHorizontal: 20, gap: 8, marginBottom: 30 },
-  presetChip: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
+  presetChip: { paddingHorizontal: 20, paddingVertical: 12, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
   presetChipActive: { backgroundColor: COLORS.orange, borderColor: COLORS.orange },
   presetText: { color: COLORS.text, fontSize: 14, fontWeight: "500" },
   presetTextActive: { color: "#FFF", fontWeight: "700" },
-
-  // Graph Section
   eqSection: { flexDirection: "row", height: GRAPH_HEIGHT + 60, paddingHorizontal: 20, marginBottom: 20 },
   yAxis: { justifyContent: "space-between", height: GRAPH_HEIGHT, paddingRight: 15, paddingBottom: 20, paddingTop: 10 },
   axisLabel: { color: COLORS.muted, fontSize: 12, fontWeight: "600" },
   slidersRow: { flex: 1, minWidth: "100%" },
   graphArea: { flex: 1, minWidth: "100%", height: GRAPH_HEIGHT, position: "relative" },
   gridLine: { position: "absolute", left: 0, right: 0, height: 1, backgroundColor: "rgba(255,255,255,0.05)" },
-  
-  // Bands
   bandsRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: "100%", paddingBottom: 20 },
   bandColumn: { flex: 1, minWidth: 44, height: "100%", alignItems: "center", justifyContent: "flex-end", position: "relative" },
   trackLine: { position: "absolute", top: 20, bottom: 20, width: 2, backgroundColor: COLORS.border },
   activeBar: { position: "absolute", bottom: 20, width: 2, backgroundColor: COLORS.orange },
   dotWrapper: { position: "absolute", alignItems: "center", justifyContent: "center", height: 0, zIndex: 10 },
-  dot: { width: 14, height: 14, borderRadius: 7, backgroundColor: COLORS.orange }, // Tiny circle for the handle is okay, or use square
+  dot: { width: 14, height: 14, borderRadius: 7, backgroundColor: COLORS.orange },
   bandValue: { position: "absolute", top: -24, color: COLORS.orange, fontSize: 11, fontWeight: "700" },
   freqLabel: { position: "absolute", bottom: -20, color: COLORS.muted, fontSize: 11, fontWeight: "600", textAlign: "center" },
-
-  // Horizontal Sliders
   bottomSection: { paddingHorizontal: 20, marginBottom: 30 },
   sectionTitle: { color: COLORS.text, fontSize: 16, fontWeight: "600", marginBottom: 12, letterSpacing: 0.3 },
   rowBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
@@ -573,15 +483,11 @@ const styles = StyleSheet.create({
   horizontalSlider: { width: "100%", height: 40 },
   rangeLabels: { flexDirection: "row", justifyContent: "space-between", marginTop: -10, paddingHorizontal: 0 },
   rangeText: { color: COLORS.muted, fontSize: 12, fontWeight: "500" },
-
-  // Bottom Bar
   bottomActionBar: { flexDirection: "row", paddingHorizontal: 20, paddingTop: 16, paddingBottom: 16, backgroundColor: COLORS.background, borderTopWidth: 1, borderTopColor: COLORS.border, gap: 12 },
   resetBtn: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, height: 52 },
   resetBtnText: { color: COLORS.text, fontSize: 14, fontWeight: "600" },
   saveBtn: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.orange, height: 52 },
   saveBtnText: { color: "#08090B", fontSize: 14, fontWeight: "700" },
-
-  // Mini Player
   miniPlayer: { backgroundColor: COLORS.surface, borderTopWidth: 1, borderTopColor: COLORS.border },
   miniPlayerContent: { flexDirection: "row", alignItems: "center", paddingHorizontal: 15, paddingVertical: 12 },
   miniArtwork: { width: 40, height: 40, backgroundColor: "#2B1B12", alignItems: "center", justifyContent: "center", marginRight: 12 },
@@ -593,8 +499,6 @@ const styles = StyleSheet.create({
   progressBarFill: { height: 2, backgroundColor: COLORS.orange },
   circleIconSmall: { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: COLORS.orange, alignItems: "center", justifyContent: "center" },
   circleInnerSmall: { width: 4, height: 4, borderRadius: 2, backgroundColor: COLORS.orange },
-
-  // Modals
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.8)", justifyContent: "flex-end" },
   modalContent: { backgroundColor: COLORS.background, paddingHorizontal: 20, paddingTop: 20, maxHeight: "85%", borderTopWidth: 1, borderTopColor: COLORS.border },
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
@@ -612,11 +516,6 @@ const styles = StyleSheet.create({
   newPresetTitle: { color: COLORS.text, fontSize: 20, fontWeight: "700", marginBottom: 20 },
   inputLabel: { color: COLORS.muted, fontSize: 13, marginBottom: 8 },
   presetNameInput: { backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.orange, paddingHorizontal: 16, paddingVertical: 14, color: COLORS.text, fontSize: 15, marginBottom: 20 },
-  segmentedControl: { flexDirection: "row", backgroundColor: COLORS.background, padding: 2, marginBottom: 20, borderWidth: 1, borderColor: COLORS.border },
-  segmentBtn: { flex: 1, paddingVertical: 12, alignItems: "center" },
-  segmentBtnActive: { backgroundColor: COLORS.orange },
-  segmentText: { color: COLORS.muted, fontSize: 13, fontWeight: "600" },
-  segmentTextActive: { color: "#08090B", fontWeight: "700" },
   newPresetActions: { flexDirection: "row", justifyContent: "flex-end", gap: 24, marginTop: 10 },
   cancelBtnText: { color: COLORS.text, fontSize: 14, fontWeight: "600", letterSpacing: 0.5 },
   saveBtnTextSmall: { color: COLORS.orange, fontSize: 14, fontWeight: "700", letterSpacing: 0.5 },

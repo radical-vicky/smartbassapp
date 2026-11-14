@@ -29,14 +29,15 @@
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
-        "android.permission.READ_MEDIA_AUDIO"
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_IMAGES"
       ],
       "package": "com.anonymous.logicbass"
     },
     "web": {
-      "output": "server",
-      "favicon": "./assets/images/favicon.png",
+      "output": "single",
+      "favicon": "./assets/images/radev-sonic-icon.png",
       "backgroundColor": "#08090B"
     },
     "plugins": [
@@ -65,14 +66,22 @@
         "expo-media-library",
         {
           "granularPermissions": [
-            "audio"
-          ]
+            "audio",
+            "video",
+            "photo"
+          ],
+          "photosPermission": "Allow Radev Sonic to access your music and videos.",
+          "savePhotosPermission": "Allow Radev Sonic to save media to your library.",
+          "isAccessMediaLocationEnabled": true
         }
       ],
       "expo-video",
       "expo-asset",
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-media-control",
+      "expo-secure-store",
+      "./modules/sonic-audio"
     ],
     "experiments": {
       "typedRoutes": true,

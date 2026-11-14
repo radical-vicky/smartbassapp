@@ -24,6 +24,7 @@ import { Alert, Platform } from "react-native";
 
 import type { SonicAudioCapabilities } from "../../modules/sonic-audio/src";
 import SonicAudioModule from "../../modules/sonic-audio/src";
+import MediaControl from "../lib/MediaControl";
 
 /* -------------------------------------------------------------------------- */
 /*                                  TYPES                                     */
@@ -63,6 +64,11 @@ export type SoundProfile =
   | "REGGAE"
   | "ROCK"
   | "TREBLE BOOST";
+
+export type ScanResult = {
+  ok: boolean;
+  reason?: "denied" | "error" | "busy";
+};
 
 const LIBRARY_CACHE_KEY = "logicbass.library.v2";
 const EQ_STATE_KEY = "logicbass.eq_state.v1";
@@ -161,7 +167,7 @@ type MusicContextType = {
   removeFromQueue: (trackId: string) => void;
   clearQueue: () => void;
 
-  scanDeviceMusic: (forceRefresh?: boolean) => Promise<void>;
+  scanDeviceMusic: (forceRefresh?: boolean) => Promise<ScanResult>;
   queueTracks: (tracks: DeviceTrack[]) => void;
   playTrack: (track: DeviceTrack, sourceQueue?: DeviceTrack[]) => void;
   playFromQueue: (trackId: string) => void;
@@ -194,8 +200,6 @@ type AudioControllerProps = {
   onStatusChange: (status: any) => void;
   onAudioSample: (sample: AudioSample) => void;
   visualizerEnabled: boolean;
-  onNextTrackRequest: () => void;
-  onPreviousTrackRequest: () => void;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -207,8 +211,6 @@ function AudioController({
   onStatusChange,
   onAudioSample,
   visualizerEnabled,
-  onNextTrackRequest,
-  onPreviousTrackRequest,
 }: AudioControllerProps) {
   const player = useAudioPlayer(null, { updateInterval: 250 });
   const status = useAudioPlayerStatus(player);
@@ -222,10 +224,6 @@ function AudioController({
     })
       .catch((error) => {
         console.error("Unable to enable background audio playback:", error);
-        Alert.alert(
-          "Background playback unavailable",
-          "RADEV SONIC could not configure audio playback for the lock screen."
-        );
       })
       .finally(() => {
         if (active) onPlayerReady(player);
@@ -240,15 +238,6 @@ function AudioController({
   useEffect(() => {
     onStatusChange(status);
   }, [status, onStatusChange]);
-
-  useEffect(() => {
-    const nextSubscription = player.addListener("nextTrackRequest", onNextTrackRequest);
-    const previousSubscription = player.addListener("previousTrackRequest", onPreviousTrackRequest);
-    return () => {
-      nextSubscription.remove();
-      previousSubscription.remove();
-    };
-  }, [player, onNextTrackRequest, onPreviousTrackRequest]);
 
   useEffect(() => {
     if (!visualizerEnabled || !player.isAudioSamplingSupported) return;
@@ -301,12 +290,12 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const [shuffle, setShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("OFF");
   const [soundProfile, setSoundProfile] = useState<SoundProfile>("AUTO");
-  const [sonicEnabled, setSonicEnabled] = useState(true);
-  const [equalizerLevels, setEqualizerLevels] = useState<number[]>(Array(16).fill(0));
-  const [bassBoost, setBassBoost] = useState(0);
-  const [clarity, setClarity] = useState(0);
-  const [spatial, setSpatial] = useState(0);
-  const [preamp, setPreamp] = useState(0);
+  const [sonicEnabled, setSonicEnabledState] = useState(true);
+  const [equalizerLevels, setEqualizerLevelsState] = useState<number[]>(Array(16).fill(0));
+  const [bassBoost, setBassBoostState] = useState(0);
+  const [clarity, setClarityState] = useState(0);
+  const [spatial, setSpatialState] = useState(0);
+  const [preamp, setPreampState] = useState(0);
   const [visualizerLevels, setVisualizerLevels] = useState<number[]>(Array(24).fill(0));
   const [visualizerEnabled, setVisualizerEnabled] = useState(false);
   const [sleepTimerMinutes, setSleepTimerMinutes] = useState<number | null>(null);
@@ -321,6 +310,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const pendingTrackRef = useRef<DeviceTrack | null>(null);
   const sonicSessionIdRef = useRef(0);
   const attachInFlightRef = useRef(false);
+  const attachRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const queueRef = useRef<DeviceTrack[]>([]);
   const currentTrackRef = useRef<DeviceTrack | null>(null);
@@ -334,6 +324,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   const notificationPermissionPromiseRef = useRef<Promise<void> | null>(null);
 
   const playNextRef = useRef<() => void>(() => {});
+  const playPreviousRef = useRef<() => void>(() => {});
 
   const eqRef = useRef({
     sonicEnabled,
@@ -388,12 +379,12 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         if (cachedEq) {
           const eq = JSON.parse(cachedEq);
           if (eq.soundProfile) setSoundProfile(eq.soundProfile);
-          if (eq.sonicEnabled !== undefined) setSonicEnabled(eq.sonicEnabled);
-          if (eq.equalizerLevels) setEqualizerLevels(eq.equalizerLevels);
-          if (eq.bassBoost !== undefined) setBassBoost(eq.bassBoost);
-          if (eq.clarity !== undefined) setClarity(eq.clarity);
-          if (eq.spatial !== undefined) setSpatial(eq.spatial);
-          if (eq.preamp !== undefined) setPreamp(eq.preamp);
+          if (eq.sonicEnabled !== undefined) setSonicEnabledState(eq.sonicEnabled);
+          if (eq.equalizerLevels) setEqualizerLevelsState(eq.equalizerLevels);
+          if (eq.bassBoost !== undefined) setBassBoostState(eq.bassBoost);
+          if (eq.clarity !== undefined) setClarityState(eq.clarity);
+          if (eq.spatial !== undefined) setSpatialState(eq.spatial);
+          if (eq.preamp !== undefined) setPreampState(eq.preamp);
         }
       } catch (e) {
         console.warn("EQ state load failed:", e);
@@ -433,7 +424,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
   const pushAudioSettings = useCallback(() => {
     if (Platform.OS !== "android") return;
-    if (sonicSessionIdRef.current <= 0) return;
     const s = eqRef.current;
     try {
       SonicAudioModule.setEnabled(s.sonicEnabled);
@@ -442,7 +432,8 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       SonicAudioModule.setClarity(s.clarity);
       SonicAudioModule.setSpatial(s.spatial);
       SonicAudioModule.setPreamp(s.preamp);
-      setAudioCapabilities(SonicAudioModule.getCapabilities());
+      const caps = SonicAudioModule.getCapabilities();
+      if (caps) setAudioCapabilities(caps);
     } catch (error) {
       console.error("Unable to apply audio settings:", error);
     }
@@ -458,7 +449,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     async (audioSessionId: number) => {
       if (Platform.OS !== "android") return;
       if (attachInFlightRef.current) return;
-      if (audioSessionId > 0 && audioSessionId === sonicSessionIdRef.current) return;
+      if (
+        audioSessionId > 0 &&
+        audioSessionId === sonicSessionIdRef.current &&
+        audioCapabilities?.attached
+      ) {
+        return;
+      }
 
       attachInFlightRef.current = true;
       try {
@@ -471,9 +468,17 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
           sonicSessionIdRef.current = caps.sessionId;
           setAudioCapabilities(caps);
           pushAudioSettings();
+          console.log("✅ Sonic Audio Attached to session:", caps.sessionId);
         } else {
           sonicSessionIdRef.current = 0;
           setAudioCapabilities(caps);
+          console.log("❌ Sonic Audio Attach Failed. Caps:", caps);
+          
+          if (attachRetryRef.current) clearTimeout(attachRetryRef.current);
+          attachRetryRef.current = setTimeout(() => {
+            attachRetryRef.current = null;
+            void tryAttach(0);
+          }, 1500);
         }
       } catch (error) {
         console.warn("SonicAudio attach failed:", error);
@@ -481,8 +486,61 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         attachInFlightRef.current = false;
       }
     },
-    [pushAudioSettings]
+    [audioCapabilities?.attached, pushAudioSettings]
   );
+
+  /* ------------------------------ Media Controls -------------------------- */
+
+  // Wire the physical/system buttons (lock screen, notification, bluetooth) to our state
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    const sub = MediaControl.addListener((event: any) => {
+      console.log("MediaControl Event:", event.command);
+      switch (event.command) {
+        case MediaControl.Command.NEXT_TRACK:
+        case "nextTrack":
+        case "next":
+          playNextRef.current();
+          break;
+        case MediaControl.Command.PREVIOUS_TRACK:
+        case "previousTrack":
+        case "previous":
+          playPreviousRef.current();
+          break;
+        case MediaControl.Command.PLAY:
+        case "play":
+          playerRef.current?.play();
+          void MediaControl.updatePlaybackState(MediaControl.PlaybackState.PLAYING);
+          setIsPlaying(true);
+          break;
+        case MediaControl.Command.PAUSE:
+        case "pause":
+          playerRef.current?.pause();
+          void MediaControl.updatePlaybackState(MediaControl.PlaybackState.PAUSED);
+          setIsPlaying(false);
+          break;
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  const enableMediaControls = useCallback(() => {
+    if (Platform.OS === "web") return;
+    void MediaControl.enableMediaControls({
+      capabilities: [
+        MediaControl.Command.PLAY,
+        MediaControl.Command.PAUSE,
+        MediaControl.Command.NEXT_TRACK,
+        MediaControl.Command.PREVIOUS_TRACK,
+      ],
+      compactCapabilities: [
+        MediaControl.Command.PREVIOUS_TRACK,
+        MediaControl.Command.PLAY,
+        MediaControl.Command.NEXT_TRACK,
+      ],
+    });
+  }, []);
 
   /* ------------------------------ Player helpers -------------------------- */
 
@@ -496,24 +554,21 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     const start = () => {
       try {
         pendingTrackRef.current = null;
+        sonicSessionIdRef.current = 0;
         player.replace(track.uri);
-        player.setActiveForLockScreen(
-          true,
-          {
+        player.play();
+
+        // Update system media notification & lock screen
+        enableMediaControls();
+        if (Platform.OS !== "web") {
+          void MediaControl.updateMetadata({
             title: track.filename.replace(/\.[^/.]+$/, ""),
             artist: track.artist,
-            albumTitle: track.album,
-          },
-          {
-            showNextTrack: true,
-            showPreviousTrack: true,
-            showSeekForward: true,
-            showSeekBackward: true,
-            seekForwardIntervalSeconds: 15,
-            seekBackwardIntervalSeconds: 15,
-          }
-        );
-        player.play();
+            album: track.album,
+          });
+          void MediaControl.updatePlaybackState(MediaControl.PlaybackState.PLAYING);
+        }
+
       } catch (error) {
         console.error("Unable to start audio track:", error);
         Alert.alert("Playback error", "This track could not be played.");
@@ -539,7 +594,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     } else {
       start();
     }
-  }, []);
+  }, [enableMediaControls]);
 
   const handlePlayerReady = useCallback(
     (player: any) => {
@@ -574,9 +629,9 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
   /* ------------------------------ Scan music ------------------------------ */
 
   const scanDeviceMusic = useCallback(
-    async (forceRefresh: boolean = false) => {
-      if (isScanningRef.current) return;
-      if (!forceRefresh && hasScanned) return;
+    async (forceRefresh: boolean = false): Promise<ScanResult> => {
+      if (isScanningRef.current) return { ok: false, reason: "busy" };
+      if (!forceRefresh && hasScanned) return { ok: true };
 
       isScanningRef.current = true;
       setIsScanning(true);
@@ -589,7 +644,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
             "Music permission required",
             "Allow RADEV SONIC to access audio files on your device."
           );
-          return;
+          return { ok: false, reason: "denied" };
         }
 
         const assets = await new Query()
@@ -651,6 +706,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         );
 
         setTracks(finalTracks);
+        setHasScanned(true);
 
         try {
           await AsyncStorage.setItem(LIBRARY_CACHE_KEY, JSON.stringify(finalTracks));
@@ -688,13 +744,15 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
             }
           }
         }
+
+        return { ok: true };
       } catch (error) {
         console.error("Music library scan failed:", error);
         Alert.alert("Scan failed", "Could not scan your music library.");
+        return { ok: false, reason: "error" };
       } finally {
         isScanningRef.current = false;
         setIsScanning(false);
-        setHasScanned(true);
       }
     },
     [hasScanned]
@@ -719,7 +777,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     setQueue((prev) => {
       const next = prev.filter((t) => t.id !== trackId);
       queueRef.current = next;
-      
+
       const currentIdx = currentIndexRef.current;
       if (currentIdx >= 0) {
         const activeTrack = currentTrackRef.current;
@@ -769,7 +827,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       setIsBuffering(true);
 
       lastFinishedTrackRef.current = null;
-      sonicSessionIdRef.current = 0;
 
       const player = playerRef.current;
       if (player) player.loop = repeatModeRef.current === "ONE";
@@ -778,7 +835,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
       setTimeout(() => {
         void tryAttach(0);
+      }, 100);
+      setTimeout(() => {
+        void tryAttach(0);
       }, 600);
+      setTimeout(() => {
+        void tryAttach(0);
+      }, 1500);
     },
     [startTrack, updateProgress, tryAttach]
   );
@@ -800,8 +863,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       setIsBuffering(true);
       lastFinishedTrackRef.current = null;
 
-      sonicSessionIdRef.current = 0;
-
       const player = playerRef.current;
       if (player) {
         try {
@@ -814,7 +875,13 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
       setTimeout(() => {
         void tryAttach(0);
+      }, 100);
+      setTimeout(() => {
+        void tryAttach(0);
       }, 600);
+      setTimeout(() => {
+        void tryAttach(0);
+      }, 1500);
     },
     [startTrack, updateProgress, tryAttach]
   );
@@ -829,17 +896,16 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       try {
         player.pause();
         player.replace({ uri: url });
-        player.setActiveForLockScreen(
-          true,
-          { title: "Spotify Preview", artist: "Spotify" },
-          {
-            showNextTrack: false,
-            showPreviousTrack: false,
-            showSeekForward: false,
-            showSeekBackward: false,
-          }
-        );
         player.play();
+
+        enableMediaControls();
+        if (Platform.OS !== "web") {
+          void MediaControl.updateMetadata({
+            title: "Spotify Preview",
+            artist: "Spotify",
+          });
+          void MediaControl.updatePlaybackState(MediaControl.PlaybackState.PLAYING);
+        }
 
         setCurrentTrack(null);
         currentTrackRef.current = null;
@@ -848,7 +914,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         setIsPlaying(true);
         setIsLoaded(false);
         setIsBuffering(true);
-
         sonicSessionIdRef.current = 0;
 
         setTimeout(() => {
@@ -859,7 +924,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
         Alert.alert("Playback Error", "Could not play this preview.");
       }
     },
-    [tryAttach]
+    [enableMediaControls, tryAttach]
   );
 
   /* ------------------------------ Next / Prev ----------------------------- */
@@ -921,6 +986,10 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (previousTrack) playTrack(previousTrack, currentQueue);
   }, [playTrack, updateProgress]);
 
+  useEffect(() => {
+    playPreviousRef.current = playPrevious;
+  }, [playPrevious]);
+
   /* ------------------------------ Play / Pause ---------------------------- */
 
   const togglePlayback = useCallback(() => {
@@ -928,8 +997,17 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     if (!player || !currentTrackRef.current) return;
 
     try {
-      if (isPlaying) player.pause();
-      else player.play();
+      if (isPlaying) {
+        player.pause();
+        if (Platform.OS !== "web") {
+          void MediaControl.updatePlaybackState(MediaControl.PlaybackState.PAUSED);
+        }
+      } else {
+        player.play();
+        if (Platform.OS !== "web") {
+          void MediaControl.updatePlaybackState(MediaControl.PlaybackState.PLAYING);
+        }
+      }
     } catch (error) {
       console.error("Playback toggle failed:", error);
     }
@@ -966,12 +1044,12 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
 
     const settings = SOUND_PROFILE_SETTINGS[profile];
     if (settings) {
-      setBassBoost(settings.bass);
-      setClarity(settings.clarity);
-      setSpatial(settings.spatial);
-      setPreamp(settings.preamp);
-      if (settings.levels) setEqualizerLevels(settings.levels);
-      else setEqualizerLevels(Array(16).fill(0));
+      setBassBoostState(settings.bass);
+      setClarityState(settings.clarity);
+      setSpatialState(settings.spatial);
+      setPreampState(settings.preamp);
+      if (settings.levels) setEqualizerLevelsState(settings.levels);
+      else setEqualizerLevelsState(Array(16).fill(0));
     }
   }, []);
 
@@ -980,27 +1058,31 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       console.error("Equalizer requires exactly 16 finite band levels.");
       return;
     }
-    setEqualizerLevels(levels.map((level) => Math.max(-12, Math.min(12, level))));
+    setEqualizerLevelsState(levels.map((level) => Math.max(-12, Math.min(12, level))));
     setSoundProfile("CUSTOM");
   }, []);
 
   const updateBassBoost = useCallback((amount: number) => {
-    setBassBoost(Math.max(0, Math.min(100, amount)));
+    setBassBoostState(Math.max(0, Math.min(100, amount)));
     setSoundProfile("CUSTOM");
   }, []);
 
   const updateClarity = useCallback((amount: number) => {
-    setClarity(Math.max(0, Math.min(100, amount)));
+    setClarityState(Math.max(0, Math.min(100, amount)));
     setSoundProfile("CUSTOM");
   }, []);
 
   const updateSpatial = useCallback((amount: number) => {
-    setSpatial(Math.max(0, Math.min(100, amount)));
+    setSpatialState(Math.max(0, Math.min(100, amount)));
     setSoundProfile("CUSTOM");
   }, []);
 
   const updatePreamp = useCallback((amount: number) => {
-    setPreamp(Math.max(-12, Math.min(12, amount)));
+    setPreampState(Math.max(-12, Math.min(12, amount)));
+  }, []);
+
+  const updateSonicEnabled = useCallback((enabled: boolean) => {
+    setSonicEnabledState(enabled);
   }, []);
 
   const enableVisualizer = useCallback(async () => {
@@ -1064,11 +1146,17 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       try {
         player.seekTo(target);
         updateProgress({ ...progressRef.current, currentTime: target });
+        if (Platform.OS !== "web") {
+          void MediaControl.updatePlaybackState(
+            isPlaying ? MediaControl.PlaybackState.PLAYING : MediaControl.PlaybackState.PAUSED,
+            target
+          );
+        }
       } catch (error) {
         console.error("Unable to seek audio:", error);
       }
     },
-    [updateProgress]
+    [updateProgress, isPlaying]
   );
 
   /* ---------------------------- Player status ----------------------------- */
@@ -1093,6 +1181,21 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       setIsPlaying(Boolean(status.playing ?? status.isPlaying));
       setIsLoaded(Boolean(status.isLoaded));
       setIsBuffering(Boolean(status.isBuffering));
+
+      // Keep system notification progress bar in sync
+      if (Platform.OS !== "web") {
+        if (status.playing) {
+          void MediaControl.updatePlaybackState(
+            MediaControl.PlaybackState.PLAYING,
+            nextCurrentTime
+          );
+        } else if (!status.isBuffering) {
+          void MediaControl.updatePlaybackState(
+            MediaControl.PlaybackState.PAUSED,
+            nextCurrentTime
+          );
+        }
+      }
 
       if (!status.didJustFinish) {
         lastFinishedTrackRef.current = null;
@@ -1141,6 +1244,16 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentTrack, isPlaying, progress.currentTime, progress.duration, seekTo]);
 
+  // Cleanup any scheduled attach retries on unmount
+  useEffect(() => {
+    return () => {
+      if (attachRetryRef.current) {
+        clearTimeout(attachRetryRef.current);
+        attachRetryRef.current = null;
+      }
+    };
+  }, []);
+
   /* ---------------------------- Context value ----------------------------- */
 
   const value = useMemo<MusicContextType>(
@@ -1185,7 +1298,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       toggleShuffle,
       cycleRepeat,
       selectSoundProfile,
-      setSonicEnabled,
+      setSonicEnabled: updateSonicEnabled,
       setEqualizerLevels: updateEqualizerLevels,
       setBassBoost: updateBassBoost,
       setClarity: updateClarity,
@@ -1208,7 +1321,7 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
       removeFromQueue, clearQueue,
       scanDeviceMusic, queueTracks, playTrack, playFromQueue, playPreview,
       togglePlayback, playNext, playPrevious, toggleShuffle, cycleRepeat, selectSoundProfile,
-      updateEqualizerLevels, updateBassBoost, updateClarity, updateSpatial, updatePreamp,
+      updateSonicEnabled, updateEqualizerLevels, updateBassBoost, updateClarity, updateSpatial, updatePreamp,
       enableVisualizer, disableVisualizer, setSleepTimer, seekTo,
     ]
   );
@@ -1223,8 +1336,6 @@ export function MusicProvider({ children }: { children: React.ReactNode }) {
               onStatusChange={handleStatusChange}
               onAudioSample={handleAudioSample}
               visualizerEnabled={visualizerEnabled}
-              onNextTrackRequest={playNext}
-              onPreviousTrackRequest={playPrevious}
             />
           )}
           {children}
