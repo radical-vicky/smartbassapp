@@ -5,7 +5,6 @@ import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.media.audiofx.LoudnessEnhancer
 import android.util.Log
-import com.facebook.react.bridge.ReactApplicationContext
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.IdentityHashMap
@@ -13,8 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlin.math.ln
 
-// UPDATED: Added reactContext to the constructor
-class SonicAudioModule(reactContext: ReactApplicationContext) : Module() {
+class SonicAudioModule : Module() {
   private var equalizer: Equalizer? = null
   private var virtualizer: Virtualizer? = null
   private var loudnessEnhancer: LoudnessEnhancer? = null
