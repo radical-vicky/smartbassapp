@@ -5,6 +5,7 @@ import android.media.audiofx.Equalizer
 import android.media.audiofx.Virtualizer
 import android.media.audiofx.LoudnessEnhancer
 import android.util.Log
+import com.facebook.react.bridge.ReactApplicationContext
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.util.IdentityHashMap
@@ -12,7 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlin.math.ln
 
-class SonicAudioModule : Module() {
+// UPDATED: Added reactContext to the constructor
+class SonicAudioModule(reactContext: ReactApplicationContext) : Module() {
   private var equalizer: Equalizer? = null
   private var virtualizer: Virtualizer? = null
   private var loudnessEnhancer: LoudnessEnhancer? = null
@@ -87,8 +89,6 @@ class SonicAudioModule : Module() {
   }
 
   private fun attachSession(newSessionId: Int) {
-    // Do NOT destroy effects if we're already on this session — this is what was
-    // causing audible dropouts and effect re-creation glitches on every play().
     if (newSessionId == sessionId && equalizer != null && sessionId > 0) {
       lastDiagnostics = "attach:reuse session=$sessionId"
       applyAllEffects()
@@ -101,9 +101,6 @@ class SonicAudioModule : Module() {
 
     if (newSessionId <= 0) return
 
-    // Order matters: Virtualizer first, then Equalizer, then LoudnessEnhancer.
-    // Android limits the number of effects per session and some OEMs fail if
-    // LoudnessEnhancer grabs the session before EQ/Virtualizer.
     try {
       virtualizer = Virtualizer(0, newSessionId).also {
         it.enabled = false
@@ -154,15 +151,9 @@ class SonicAudioModule : Module() {
       )
 
       for (band in 0 until bandCount) {
-        // getCenterFreq returns MILLIHERTZ on Android. Do NOT divide by 1000 here
-        // and then compare against Hz targets — convert to Hz once, clearly.
         val frequencyHz = effect.getCenterFreq(band.toShort()).toDouble() / 1000.0
-
-        // Interpolate the 16-band curve down to whatever hardware bands exist.
         var gainDb = interpolateGain(frequencyHz, targetFrequencies)
 
-        // Bass contribution — bake it into the EQ so it's audible on all
-        // hardware, not just those with a dedicated BassBoost effect.
         if (bassAmount > 0) {
           when {
             frequencyHz <= 40.0  -> gainDb += bassAmount * 0.22
@@ -172,12 +163,10 @@ class SonicAudioModule : Module() {
           }
         }
 
-        // Clarity: lift the presence band.
         if (frequencyHz in 2500.0..10000.0) {
           gainDb += clarityAmount * 0.03
         }
 
-        // Preamp gain (dB) — do NOT multiply by 100 here; it's already in dB.
         gainDb += preampAmount.toDouble()
 
         val levelMillibels = (gainDb * 100.0).toInt().coerceIn(minimum, maximum)
@@ -192,8 +181,6 @@ class SonicAudioModule : Module() {
   private fun applyPreamp() {
     val effect = loudnessEnhancer ?: return
     try {
-      // LoudnessEnhancer gain is in millibels (mB). Use only the explicit
-      // preamp here — bass is already handled in the equalizer above.
       val totalGainMb = (preampAmount * 100)
       val finalGain = totalGainMb.coerceIn(-1200, 1500)
       effect.setTargetGain(finalGain)
@@ -238,7 +225,7 @@ class SonicAudioModule : Module() {
       "sessionId" to sessionId,
       "enabled" to sonicEnabled,
       "equalizerAvailable" to (eqBands > 0),
-      "bassBoostAvailable" to (eqBands > 0), // bass is applied via EQ
+      "bassBoostAvailable" to (eqBands > 0), 
       "bassBoostStrengthSupported" to true,
       "spatialAvailable" to (virtualizer != null),
       "spatialStrengthSupported" to (virtualizer?.strengthSupported == true),
@@ -312,4 +299,3 @@ class SonicAudioModule : Module() {
 
   companion object { private const val TAG = "SonicAudio" }
 }
-
