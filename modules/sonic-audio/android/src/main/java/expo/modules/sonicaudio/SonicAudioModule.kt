@@ -312,3 +312,4 @@ class SonicAudioModule : Module() {
 
   companion object { private const val TAG = "SonicAudio" }
 }
+
